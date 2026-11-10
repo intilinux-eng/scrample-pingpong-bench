@@ -52,7 +52,7 @@ Everything builds and runs on **Linux x86-64** only. On Windows, open the folder
 dev container; both are functional environments, not real-time ones (see
 [Status and limits](#status-and-limits)).
 
-**Option A: WSL 2 (Ubuntu).** Clone inside the Linux file system, not under `/mnt/c`.
+**Step 1 (preferred: WSL 2 (Ubuntu).** Clone inside the Linux file system, not under `/mnt/c`.
 
 ```bash
 sudo apt update && sudo apt install -y build-essential git util-linux
@@ -64,7 +64,7 @@ git clone https://github.com/intilinux-eng/scrample-pingpong-bench.git
 cd scrample-pingpong-bench && code .
 ```
 
-**Option B: dev container.** With Docker and the *Dev Containers* extension installed, run
+**Step 2: dev container.** With Docker and the *Dev Containers* extension installed, run
 *Dev Containers: Reopen in Container*. The image is the one eclipse-score/scrample uses.
 
 Then, in VS Code, *Terminal > Run Task...* offers the tasks below. The same commands work in a shell.
