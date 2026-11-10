@@ -1,0 +1,24 @@
+# Bazel
+bazel-*
+MODULE.bazel.lock
+user.bazelrc
+/external
+
+# Benchmark output
+/benchmark_results/
+
+# Build leftovers
+*.o
+*.a
+*.so
+*.d
+compile_commands.json
+
+# Python
+__pycache__/
+.venv/
+
+# OS / editor
+.DS_Store
+Thumbs.db
+*.swp

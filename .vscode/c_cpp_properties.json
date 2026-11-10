@@ -1,0 +1,19 @@
+{
+    // IntelliSense include paths into Bazel's external repositories.
+    // They exist only after the first successful build ("bazel: build (opt)").
+    "version": 4,
+    "configurations": [
+        {
+            "name": "Linux (Bazel)",
+            "includePath": [
+                "${workspaceFolder}",
+                "${workspaceFolder}/bazel-${workspaceFolderBasename}/external/score_communication+",
+                "${workspaceFolder}/bazel-${workspaceFolderBasename}/external/score_baselibs+",
+                "${workspaceFolder}/bazel-${workspaceFolderBasename}/external/score_baselibs+/score/language/futurecpp/include",
+                "${workspaceFolder}/bazel-${workspaceFolderBasename}/external/google_benchmark+/include"
+            ],
+            "cppStandard": "c++17",
+            "intelliSenseMode": "linux-gcc-x64"
+        }
+    ]
+}

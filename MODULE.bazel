@@ -1,0 +1,54 @@
+# *******************************************************************************
+# Copyright (c) 2026 Contributors to the Eclipse Foundation
+#
+# See the NOTICE file(s) distributed with this work for additional
+# information regarding copyright ownership.
+#
+# This program and the accompanying materials are made available under the
+# terms of the Apache License Version 2.0 which is available at
+# https://www.apache.org/licenses/LICENSE-2.0
+#
+# SPDX-License-Identifier: Apache-2.0
+# *******************************************************************************
+
+# Versions and overrides mirror eclipse-score/scrample, reduced to what the
+# benchmark needs. Keep them in step with scrample when bumping S-CORE.
+module(
+    name = "score_pingpong_bench",
+    version = "0.1.0",
+)
+
+bazel_dep(name = "platforms", version = "1.0.0")
+bazel_dep(name = "rules_cc", version = "0.2.1")
+
+# Python toolchain used by build-time tooling of the S-CORE modules.
+bazel_dep(name = "rules_python", version = "1.4.1")
+
+python = use_extension("@rules_python//python/extensions:python.bzl", "python")
+python.toolchain(
+    is_default = True,
+    python_version = "3.12",
+)
+
+# Google Benchmark. The repo_name keeps the conventional @com_github_google_benchmark label.
+bazel_dep(name = "google_benchmark", version = "1.9.5", repo_name = "com_github_google_benchmark")
+
+# Eclipse S-CORE. score_communication provides score::mw::com.
+bazel_dep(name = "score_baselibs", version = "0.1.3")
+bazel_dep(name = "score_communication", version = "0.1.1")
+
+# score_communication depends on the two modules below without a registry version.
+# Overrides are only honoured in the root module, so they have to be repeated here.
+bazel_dep(name = "rules_boost", repo_name = "com_github_nelhage_rules_boost")
+archive_override(
+    module_name = "rules_boost",
+    strip_prefix = "rules_boost-master",
+    urls = ["https://github.com/nelhage/rules_boost/archive/refs/heads/master.tar.gz"],
+)
+
+bazel_dep(name = "trlc", version = "0.0.0")
+git_override(
+    module_name = "trlc",
+    commit = "ede35c4411d41abe42b8f19e78f8989ff79ad3d8",  # trlc-2.0.2
+    remote = "https://github.com/bmw-software-engineering/trlc.git",
+)

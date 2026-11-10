@@ -1,0 +1,91 @@
+{
+  "serviceTypes": [
+    {
+      "serviceTypeName": "/score/benchmark/PingPongTopicA",
+      "version": {
+        "major": 1,
+        "minor": 0
+      },
+      "bindings": [
+        {
+          "binding": "SHM",
+          "serviceId": 6433,
+          "events": [
+            {
+              "eventName": "ping",
+              "eventId": 1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "serviceTypeName": "/score/benchmark/PingPongTopicB",
+      "version": {
+        "major": 1,
+        "minor": 0
+      },
+      "bindings": [
+        {
+          "binding": "SHM",
+          "serviceId": 6434,
+          "events": [
+            {
+              "eventName": "pong",
+              "eventId": 1
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "serviceInstances": [
+    {
+      "instanceSpecifier": "score/benchmark/topic_a",
+      "serviceTypeName": "/score/benchmark/PingPongTopicA",
+      "version": {
+        "major": 1,
+        "minor": 0
+      },
+      "instances": [
+        {
+          "instanceId": 1,
+          "asil-level": "QM",
+          "binding": "SHM",
+          "events": [
+            {
+              "eventName": "ping",
+              "numberOfSampleSlots": 5,
+              "maxSubscribers": 1
+            }
+          ]
+        }
+      ]
+    },
+    {
+      "instanceSpecifier": "score/benchmark/topic_b",
+      "serviceTypeName": "/score/benchmark/PingPongTopicB",
+      "version": {
+        "major": 1,
+        "minor": 0
+      },
+      "instances": [
+        {
+          "instanceId": 1,
+          "asil-level": "QM",
+          "binding": "SHM",
+          "events": [
+            {
+              "eventName": "pong",
+              "numberOfSampleSlots": 5,
+              "maxSubscribers": 1
+            }
+          ]
+        }
+      ]
+    }
+  ],
+  "global": {
+    "asil-level": "QM"
+  }
+}

@@ -1,0 +1,54 @@
+{
+    // Run with Terminal > Run Task... (or Ctrl+Shift+B for the default build).
+    // All tasks need a Linux shell: open the folder in WSL or in the dev container first.
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "bazel: build (opt)",
+            "type": "shell",
+            "command": "bazel build --config=host -c opt //src/benchmark:score_pingpong_bench",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": [
+                "$gcc"
+            ]
+        },
+        {
+            "label": "bazel: build (dbg)",
+            "type": "shell",
+            "command": "bazel build --config=host -c dbg //src/benchmark:score_pingpong_bench",
+            "group": "build",
+            "problemMatcher": [
+                "$gcc"
+            ]
+        },
+        {
+            "label": "bench: quick run (no real-time setup)",
+            "detail": "Functional check only. Numbers are not comparable to a real-time run.",
+            "type": "shell",
+            "command": "bazel run --config=host -c opt //src/benchmark:score_pingpong_bench -- --service_instance_manifest=${workspaceFolder}/src/benchmark/etc/mw_com_config.json --benchmark_min_time=0.1s",
+            "problemMatcher": []
+        },
+        {
+            "label": "bench: real-time run (single process)",
+            "detail": "Pinned to BENCH_CORES (default 2,3) under SCHED_FIFO 99. Asks for sudo.",
+            "type": "shell",
+            "command": "${workspaceFolder}/src/benchmark/run_benchmark.sh",
+            "problemMatcher": []
+        },
+        {
+            "label": "bench: real-time run (two processes)",
+            "detail": "Master and Reflector as separate processes, one core each. Asks for sudo.",
+            "type": "shell",
+            "command": "${workspaceFolder}/src/benchmark/run_benchmark.sh",
+            "options": {
+                "env": {
+                    "BENCH_MODE": "split"
+                }
+            },
+            "problemMatcher": []
+        }
+    ]
+}

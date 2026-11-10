@@ -1,0 +1,4 @@
+# Everything is built and run on Linux, so text files are always checked out with LF,
+# also when the repository is cloned on Windows.
+* text=auto eol=lf
+*.sh text eol=lf

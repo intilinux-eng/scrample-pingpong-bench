@@ -1,0 +1,10 @@
+{
+    "recommendations": [
+        "ms-vscode.cpptools",
+        "bazelbuild.vscode-bazel",
+        "ms-vscode-remote.remote-wsl",
+        "ms-vscode-remote.remote-containers",
+        "timonwong.shellcheck",
+        "github.vscode-github-actions"
+    ]
+}

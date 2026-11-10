@@ -1,0 +1,22 @@
+{
+    // Same image as eclipse-score/scrample, so the toolchain matches upstream.
+    "name": "score-pingpong-bench",
+    "image": "ghcr.io/eclipse-score/devcontainer:v1.1.0",
+    "runArgs": [
+        // Docker gives /dev/shm 64 MiB by default; the benchmark maps about 100 MiB of sample slots.
+        "--shm-size=1g",
+        // Needed for chrt -f (SCHED_FIFO) and mlockall() inside the container.
+        "--cap-add=SYS_NICE",
+        "--cap-add=IPC_LOCK"
+    ],
+    "customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-vscode.cpptools",
+                "bazelbuild.vscode-bazel",
+                "timonwong.shellcheck",
+                "github.vscode-github-actions"
+            ]
+        }
+    }
+}

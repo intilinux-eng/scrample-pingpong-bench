@@ -1,0 +1,31 @@
+{
+    // The project only builds and runs on Linux, so files keep LF endings on every host.
+    "files.eol": "\n",
+    "files.insertFinalNewline": true,
+    "files.trimTrailingWhitespace": true,
+    "editor.rulers": [
+        120
+    ],
+    // Keep the file watcher and search out of Bazel's output trees.
+    "files.watcherExclude": {
+        "**/bazel-*/**": true
+    },
+    "search.exclude": {
+        "**/bazel-*": true
+    },
+    "files.associations": {
+        ".bazelrc": "shellscript",
+        "*.bazel": "starlark"
+    },
+    // Validation and completion for the mw::com manifest, pinned to the version in MODULE.bazel.
+    "json.schemas": [
+        {
+            "fileMatch": [
+                "**/mw_com_config.json"
+            ],
+            "url": "https://raw.githubusercontent.com/eclipse-score/communication/v0.1.1/score/mw/com/impl/configuration/ara_com_config_schema.json"
+        }
+    ],
+    "C_Cpp.default.cppStandard": "c++17",
+    "bazel.buildifierFixOnFormat": true
+}

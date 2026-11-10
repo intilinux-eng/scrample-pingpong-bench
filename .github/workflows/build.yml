@@ -1,0 +1,77 @@
+# *******************************************************************************
+# Copyright (c) 2026 Contributors to the Eclipse Foundation
+#
+# See the NOTICE file(s) distributed with this work for additional
+# information regarding copyright ownership.
+#
+# This program and the accompanying materials are made available under the
+# terms of the Apache License Version 2.0 which is available at
+# https://www.apache.org/licenses/LICENSE-2.0
+#
+# SPDX-License-Identifier: Apache-2.0
+# *******************************************************************************
+
+# Builds the benchmark and runs a short smoke test in both topologies.
+# The numbers from a shared CI runner are NOT performance results: no core isolation,
+# no real-time scheduling. The run only proves that the binary builds and completes.
+
+name: build
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TARGET: //src/benchmark:score_pingpong_bench
+  BINARY: bazel-bin/src/benchmark/score_pingpong_bench
+
+jobs:
+  build-and-smoke-test:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4.2.2
+
+      - uses: bazel-contrib/setup-bazel@0.15.0
+        with:
+          bazelisk-cache: true
+          disk-cache: ${{ github.workflow }}
+          repository-cache: true
+
+      - name: Build (opt)
+        run: bazel build --config=host -c opt "${TARGET}"
+
+      - name: Smoke test, single process
+        run: |
+          mkdir -p benchmark_results
+          "${BINARY}" --role=both \
+            --service_instance_manifest="${PWD}/src/benchmark/etc/mw_com_config.json" \
+            --benchmark_min_time=0.05s \
+            --benchmark_out=benchmark_results/ci_single.json --benchmark_out_format=json
+
+      - name: Smoke test, two processes
+        run: |
+          manifest="${PWD}/src/benchmark/etc/mw_com_config.json"
+          "${BINARY}" --role=reflector --service_instance_manifest="${manifest}" &
+          reflector_pid=$!
+          trap 'kill -TERM "${reflector_pid}" 2>/dev/null || true' EXIT
+          "${BINARY}" --role=master --service_instance_manifest="${manifest}" \
+            --benchmark_min_time=0.05s \
+            --benchmark_out=benchmark_results/ci_split.json --benchmark_out_format=json
+
+      - name: Upload smoke test output
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: smoke-test-results
+          path: benchmark_results/
+          if-no-files-found: ignore

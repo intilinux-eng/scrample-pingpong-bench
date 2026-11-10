@@ -1,0 +1,33 @@
+{
+    // Debugging needs the C/C++ extension and gdb, in WSL or in the dev container.
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Debug benchmark (single process, 64 B only)",
+            "type": "cppdbg",
+            "request": "launch",
+            "preLaunchTask": "bazel: build (dbg)",
+            "program": "${workspaceFolder}/bazel-bin/src/benchmark/score_pingpong_bench",
+            "args": [
+                "--role=both",
+                "--service_instance_manifest=${workspaceFolder}/src/benchmark/etc/mw_com_config.json",
+                "--benchmark_filter=BM_PingPong/bytes:64$",
+                "--benchmark_min_time=0.05s"
+            ],
+            "cwd": "${workspaceFolder}",
+            "MIMode": "gdb",
+            "stopAtEntry": false,
+            // Bazel compiles in a sandbox, so debug info refers to /proc/self/cwd.
+            "sourceFileMap": {
+                "/proc/self/cwd": "${workspaceFolder}"
+            },
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                }
+            ]
+        }
+    ]
+}
