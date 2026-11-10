@@ -22,12 +22,15 @@
 // (--role=both, the default) or in two (--role=master / --role=reflector), which is the
 // configuration that actually crosses a process boundary.
 //
-// Two benchmarks are registered, because "echo the same data back" and "O(1)" cannot both hold:
+// Three benchmarks are registered, because "echo the same data back" and "O(1)" cannot both hold:
 // mw::com cannot re-publish a received sample on another event, so echoing the bytes costs a memcpy.
 //
-//   BM_PingPong           Timed region: Send(ping) -> pong received. The Reflector echoes the
-//                         header only. This isolates the middleware transfer, which hands over a
-//                         slot reference and is expected to be flat (O(1)) from 64 B to 10 MiB.
+//   BM_PingPong           Timed region: Send(ping) -> pong received. The Master writes N payload
+//                         bytes before the timed region, the Reflector echoes the header only.
+//                         This is the transfer as an application sees it right after producing data.
+//   BM_PingPong_NoFill    Same, but the payload bytes are not written at all. Writing megabytes
+//                         evicts the CPU caches, which slows down whatever runs next. This variant
+//                         removes that side effect and shows the transfer on its own.
 //   BM_PingPong_FullEcho  Timed region: Allocate + fill N bytes + Send -> pong received. The
 //                         Reflector memcpy()s all N bytes into its pong. This is the literal
 //                         "exact same data back" flow and is O(N) by construction - the linear part
@@ -404,7 +407,7 @@ class Master final
         const auto deadline = Clock::now() + kDiscoveryTimeout;
         while (!StopRequested() && Clock::now() < deadline)
         {
-            if (RoundTrip(kMinPayloadBytes, EchoMode::kHeaderOnly, kHandshakeAttemptTimeout).error == nullptr)
+            if (RoundTrip(kMinPayloadBytes, EchoMode::kHeaderOnly, true, kHandshakeAttemptTimeout).error == nullptr)
             {
                 return true;
             }
@@ -417,6 +420,7 @@ class Master final
     // Precondition: payload_bytes <= kMaxPayloadBytes.
     RoundTripResult RoundTrip(const std::size_t payload_bytes,
                               const EchoMode mode,
+                              const bool fill_payload,
                               const std::chrono::nanoseconds timeout) noexcept
     {
         const auto sequence_id = ++last_sequence_id_;
@@ -434,7 +438,10 @@ class Master final
         ping->payload_size = payload_bytes;
         ping->echo_mode = mode;
         ping->reserved = 0U;
-        std::memset(ping->data.data(), fill, payload_bytes);
+        if (fill_payload)
+        {
+            std::memset(ping->data.data(), fill, payload_bytes);
+        }
 
         const auto send_time = Clock::now();
         if (!ping_skeleton_->ping_.Send(std::move(ping)).has_value())
@@ -585,7 +592,8 @@ void Fail(benchmark::State& state, const char* const message)
     state.SkipWithError(message);
 }
 
-void RunPingPong(benchmark::State& state, const EchoMode mode)
+// fill_payload must be true for EchoMode::kFullPayload: the integrity check relies on the fill.
+void RunPingPong(benchmark::State& state, const EchoMode mode, const bool fill_payload)
 {
     const auto payload_bytes = static_cast<std::size_t>(state.range(0));
 
@@ -613,7 +621,7 @@ void RunPingPong(benchmark::State& state, const EchoMode mode)
             break;
         }
 
-        const auto result = g_master->RoundTrip(payload_bytes, mode, kRoundTripTimeout);
+        const auto result = g_master->RoundTrip(payload_bytes, mode, fill_payload, kRoundTripTimeout);
         if (result.error != nullptr)
         {
             Fail(state, result.error);
@@ -652,21 +660,36 @@ void RunPingPong(benchmark::State& state, const EchoMode mode)
     state.counters["wall_round_trips_per_sec"] = round_trips / wall_elapsed.count();
 }
 
-// Zero-copy transfer cost. Expected complexity: O(1).
+// Zero-copy transfer right after the payload was produced. The fill itself is not timed.
 static void BM_PingPong(benchmark::State& state)
 {
-    RunPingPong(state, EchoMode::kHeaderOnly);
+    RunPingPong(state, EchoMode::kHeaderOnly, true);
+}
+
+// Zero-copy transfer with untouched payload bytes: no cache eviction by the fill. Expected: O(1).
+static void BM_PingPong_NoFill(benchmark::State& state)
+{
+    RunPingPong(state, EchoMode::kHeaderOnly, false);
 }
 
 // Literal "same data back" flow, including the fill and the Reflector's copy. Expected: O(N).
 static void BM_PingPong_FullEcho(benchmark::State& state)
 {
-    RunPingPong(state, EchoMode::kFullPayload);
+    RunPingPong(state, EchoMode::kFullPayload, true);
 }
 
 // Range(64, 10 << 20) with multiplier 8 yields 64 B, 512 B, 4 KiB, 32 KiB, 256 KiB, 2 MiB, 10 MiB.
 // Complexity() makes Google Benchmark fit and report the big-O curve over those sizes.
 BENCHMARK(BM_PingPong)
+    ->RangeMultiplier(8)
+    ->Range(static_cast<std::int64_t>(kMinPayloadBytes), static_cast<std::int64_t>(kMaxPayloadBytes))
+    ->ArgName("bytes")
+    ->UseManualTime()
+    ->MinWarmUpTime(0.1)
+    ->Unit(benchmark::kMicrosecond)
+    ->Complexity();
+
+BENCHMARK(BM_PingPong_NoFill)
     ->RangeMultiplier(8)
     ->Range(static_cast<std::int64_t>(kMinPayloadBytes), static_cast<std::int64_t>(kMaxPayloadBytes))
     ->ArgName("bytes")
