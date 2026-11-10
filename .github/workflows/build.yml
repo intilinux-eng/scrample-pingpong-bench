@@ -48,7 +48,7 @@ jobs:
           repository-cache: true
 
       - name: Build (opt)
-        run: bazel build --config=host -c opt "${TARGET}"
+        run: bazel build --config=host -c opt --keep_going "${TARGET}"
 
       - name: Smoke test, single process
         run: |

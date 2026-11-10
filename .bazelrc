@@ -26,5 +26,10 @@ build:_common --cxxopt=-Wno-error=deprecated-declarations
 # Always build with --config=host. Without it the flags above are missing and the build fails.
 build:host --config=_common
 
+# Upstream compiles its sources with -Werror. With -c opt, GCC 13 reports a flow-analysis false
+# positive in score/memory/shared/offset_ptr.h that an unoptimised build (what scrample uses) does
+# not. Keep it a warning so the optimised build that a benchmark needs goes through.
+build:host --cxxopt=-Wno-error=maybe-uninitialized
+
 # Optional, untracked per-user settings.
 try-import %workspace%/user.bazelrc
