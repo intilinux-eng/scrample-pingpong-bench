@@ -12,17 +12,20 @@ The alternative is one type per size, which needs one event (and one manifest en
 measures the same thing, because the transport passes a slot reference in either case, and costs
 seven times the configuration.
 
-## 2. Two benchmarks, because "echo the same data" is not O(1)
+## 2. Three benchmarks, because "echo the same data" is not O(1)
 
 The original plan was a single ping-pong where the Reflector sends the same data back. A received
 sample cannot be re-published on another event, so sending it back means copying N bytes. That copy
 would make the round trip linear in N and say nothing about the middleware.
 
-- `BM_PingPong` times `Send(ping)` until the pong arrives. The Reflector echoes the header only.
+- `BM_PingPong_NoFill` times `Send(ping)` until the pong arrives. The payload bytes are never
+  written and the Reflector echoes the header only.
+- `BM_PingPong` is the same, but the Master writes N payload bytes just before the timed region.
 - `BM_PingPong_FullEcho` times allocate, fill, send, until the pong arrives. The Reflector copies
   all N bytes.
 
-The first is the measurement. The second is the control that shows what the first leaves out.
+The first is the measurement of the transport. The other two are controls that show what it leaves
+out. The no-fill variant was added after the first results; section 12 has the reason.
 
 ## 3. Where the timestamps are taken
 
@@ -97,6 +100,43 @@ Two changes fixed it:
 
 The lesson for benchmarks in general: a harness that sends the next message the moment the previous
 one is acknowledged is the worst case for this kind of overlap, and finds it quickly.
+
+## 12. Writing the payload slows down the transfer that follows
+
+`BM_PingPong` was meant to be the O(1) measurement: the fill happens before the start timestamp, so
+it should not count. The first complete run showed otherwise. The round trip was flat up to 256 KiB
+and then rose at 2 MiB and 10 MiB.
+
+The middleware copies nothing in that benchmark, so the suspect was the fill itself: writing
+megabytes pushes the middleware's code and bookkeeping out of the CPU caches, and the timed transfer
+then runs cold. `BM_PingPong_NoFill` tests that by leaving the payload bytes untouched.
+
+Mean round-trip time in µs from the CI smoke test (GitHub Actions run 42889833328, single process,
+2 shared vCPUs at 2.6 GHz, no core isolation, no real-time scheduling):
+
+| Payload | `BM_PingPong_NoFill` | `BM_PingPong` | `BM_PingPong_FullEcho` |
+|---|---|---|---|
+| 64 B | 16.5 | 13.7 | 15.5 |
+| 512 B | 15.8 | 14.7 | 15.2 |
+| 4 KiB | 16.4 | 16.1 | 15.4 |
+| 32 KiB | 15.9 | 15.8 | 16.8 |
+| 256 KiB | 15.2 | 16.7 | 34.8 |
+| 2 MiB | 14.7 | 23.8 | 254 |
+| 10 MiB | 15.3 | 35.8 | 1156 |
+| Fitted complexity | O(1), RMS 4 % | O(log N), RMS 23 % | O(N), RMS 7 % |
+
+The two-process run had the same shape: 17.4 to 23.5 µs with a fitted O(1) for the no-fill variant,
+17.7 to 46.0 µs with the fill, and 20.8 to 1269 µs for the full echo.
+
+What this supports, with the caveat that a shared CI runner gives a shape and not a measurement:
+
+- the transfer itself does not depend on the payload size across a range of 160,000 to 1;
+- producing a payload larger than the caches makes the next transfer two to three times slower,
+  which is a property of the machine, not of the middleware;
+- copying dominates everything from a few hundred kilobytes on.
+
+A run on isolated cores should confirm the cache explanation: the rise in `BM_PingPong` ought to
+begin where the payload exceeds the L2 cache of that machine.
 
 ## Open questions and next experiments
 

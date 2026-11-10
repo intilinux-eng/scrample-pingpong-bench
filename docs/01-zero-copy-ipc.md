@@ -23,8 +23,9 @@ about what it leaves out.
 | First touch of each page (page fault) | whoever touches it first | N, once |
 | Moving cache lines to the consumer's core | consumer, on read | bytes actually read |
 | Copying into another message (an "echo") | the application | N |
+| Cold caches after writing a large payload | whatever runs next | N, up to the cache size |
 
-The last two are easy to overlook. Zero-copy removes the middleware's copies, but when the consumer
+The cache effects are easy to overlook. Zero-copy removes the middleware's copies, but when the consumer
 runs on another core, reading the data still pulls it across the cache hierarchy. A consumer that
 reads all 10 MiB pays for 10 MiB. The saving is that it pays once instead of three or four times,
 and pays nothing for bytes it never looks at.
@@ -61,8 +62,9 @@ The data type lives in shared memory and is read by another process, so:
 
 ## How the benchmark tests the claim
 
-`BM_PingPong` times only `Send()` until the reply arrives, for payload sizes from 64 B to 10 MiB,
-and lets Google Benchmark fit a complexity curve. If the transport is zero-copy, the curve is flat.
-`BM_PingPong_FullEcho` adds the producer's fill and a full copy on the other side, which shows the
-linear cost the first benchmark deliberately leaves out. See
-[03 Benchmark design](03-benchmark-design.md).
+`BM_PingPong_NoFill` times only `Send()` until the reply arrives, for payload sizes from 64 B to
+10 MiB, and lets Google Benchmark fit a complexity curve. If the transport is zero-copy, the curve
+is flat. `BM_PingPong` does the same right after writing the payload, which exposes the cache cost
+from the table above. `BM_PingPong_FullEcho` adds the producer's fill and a full copy on the other
+side to the timed region, which shows the linear cost the first benchmark deliberately leaves out.
+See [03 Benchmark design](03-benchmark-design.md), section 12 for what the three curves looked like.

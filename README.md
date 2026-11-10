@@ -29,16 +29,22 @@ sequenceDiagram
     M->>M: RTT = t1 - t0, one-way latency = RTT / 2
 ```
 
-Two benchmarks run over the payload sizes 64 B, 512 B, 4 KiB, 32 KiB, 256 KiB, 2 MiB and 10 MiB:
+Three benchmarks run over the payload sizes 64 B, 512 B, 4 KiB, 32 KiB, 256 KiB, 2 MiB and 10 MiB:
 
-| Benchmark | Timed region | Reflector echoes | Expected |
-|---|---|---|---|
-| `BM_PingPong` | `Send(ping)` until the pong arrives | header only | flat, O(1) |
-| `BM_PingPong_FullEcho` | allocate, fill N bytes, send, until the pong arrives | all N bytes (`memcpy`) | linear, O(N) |
+| Benchmark | Payload written | Timed region | Reflector echoes | Expected |
+|---|---|---|---|---|
+| `BM_PingPong_NoFill` | no | `Send(ping)` until the pong arrives | header only | flat, O(1) |
+| `BM_PingPong` | yes, before the timed region | `Send(ping)` until the pong arrives | header only | flat until the payload outgrows the CPU caches |
+| `BM_PingPong_FullEcho` | yes, inside the timed region | allocate, fill, send, until the pong arrives | all N bytes (`memcpy`) | linear, O(N) |
 
-The first isolates the middleware. The second is the same exchange with the application's own
-memory work included, so the two curves side by side show where the time goes.
-[docs/03-benchmark-design.md](docs/03-benchmark-design.md) explains why one benchmark cannot do both.
+The first isolates the middleware. The second shows the same transfer right after an application
+produced the data. The third adds the application's own memory work to the timed region. Side by
+side, the three curves show where the time goes.
+[docs/03-benchmark-design.md](docs/03-benchmark-design.md) explains why one benchmark cannot do it all.
+
+In the CI smoke test (a shared 2-vCPU runner, so the shape counts, not the values) the mean round
+trip from 64 B to 10 MiB was 14.7 to 16.5 µs for `BM_PingPong_NoFill`, with a fitted complexity of
+O(1), and grew from 15.5 µs to 1156 µs for `BM_PingPong_FullEcho`.
 
 ## Quick start
 
@@ -90,8 +96,9 @@ Extra arguments are passed on to Google Benchmark, for example
 ## Reading the output
 
 Each row is one payload size. `Time` is the mean round-trip time. The `_BigO` row is the complexity
-Google Benchmark fitted across the sizes: `(1)` for `BM_PingPong` is the result the benchmark is
-looking for.
+Google Benchmark fitted across the sizes, and `_RMS` is how well that curve fits. `(1)` with a small
+RMS for `BM_PingPong_NoFill` is the result the benchmark is looking for. Trust the fit only when the
+RMS is low; otherwise read the `Time` column.
 
 | Counter | Meaning |
 |---|---|
@@ -154,6 +161,9 @@ bazel_dep(name = "google_benchmark", version = "1.9.5", repo_name = "com_github_
 - **Versions:** written against `score_communication` 0.1.1 and `score_baselibs` 0.1.3, the versions
   scrample pins. The `mw::com` API changes between releases.
 - **Memory:** about 100 MiB of `/dev/shm` (5 slots × 10 MiB × 2 topics).
+- **Shutdown message:** in two-process mode the Reflector can log
+  `Sending UnregisterEventNotificationMessage ... failed` when the Master has already exited. It is
+  harmless.
 
 ## License
 
