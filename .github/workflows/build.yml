@@ -55,7 +55,7 @@ jobs:
           mkdir -p benchmark_results
           "${BINARY}" --role=both \
             --service_instance_manifest="${PWD}/src/benchmark/etc/mw_com_config.json" \
-            --benchmark_min_time=0.05s \
+            --benchmark_min_time=0.2s \
             --benchmark_out=benchmark_results/ci_single.json --benchmark_out_format=json
 
       - name: Smoke test, two processes
@@ -65,7 +65,7 @@ jobs:
           reflector_pid=$!
           trap 'kill -TERM "${reflector_pid}" 2>/dev/null || true' EXIT
           "${BINARY}" --role=master --service_instance_manifest="${manifest}" \
-            --benchmark_min_time=0.05s \
+            --benchmark_min_time=0.2s \
             --benchmark_out=benchmark_results/ci_split.json --benchmark_out_format=json
 
       - name: Upload smoke test output

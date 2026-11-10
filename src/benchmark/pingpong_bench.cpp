@@ -17,7 +17,8 @@
 //      Master <-- pong on Topic_B --   Reflector
 //
 // The Master runs on the Google Benchmark thread. The Reflector has no thread of its own: it runs
-// entirely inside the mw::com receive handler of Topic_A. Both can live in one process
+// entirely inside the mw::com receive handler of Topic_A, on mw::com's worker threads. Both can
+// live in one process
 // (--role=both, the default) or in two (--role=master / --role=reflector), which is the
 // configuration that actually crosses a process boundary.
 //
@@ -59,6 +60,7 @@
 #include <memory>
 #include <mutex>
 #include <numeric>
+#include <optional>
 #include <string>
 #include <string_view>
 #include <thread>
@@ -288,10 +290,12 @@ class Reflector final
     }
 
   private:
-    // Runs on the mw::com notification thread. Nothing else touches the pong skeleton after
-    // Offer(), so Allocate()/Send() need no further locking.
+    // mw::com dispatches receive handlers on a pool of two worker threads, so a second invocation
+    // can start while the first is still returning. Proxy events and skeleton events are not safe
+    // for concurrent use, hence the lock around everything the handler touches.
     void OnPing() noexcept
     {
+        const std::lock_guard<std::mutex> handler_lock{handler_mutex_};
         (void)ping_proxy_->ping_.GetNewSamples(
             [this](score::mw::com::SamplePtr<PingPongPayload> ping) noexcept { Echo(*ping); },
             kMaxSamplesPerSubscription);
@@ -329,6 +333,7 @@ class Reflector final
     // destroyed first.
     std::unique_ptr<TopicBSkeleton> pong_skeleton_;
     std::unique_ptr<TopicAProxy> ping_proxy_;
+    std::mutex handler_mutex_;  // serialises OnPing(), see there
     std::atomic<std::uint64_t> failed_echoes_{0U};
 };
 
@@ -464,21 +469,37 @@ class Master final
         bool intact{true};
     };
 
-    // Runs on the mw::com notification thread. The final timestamp is taken here, before the
-    // benchmark thread is woken, so that the harness' own wake-up is not counted as IPC latency.
+    // Runs on an mw::com worker thread. The final timestamp is taken here, before the benchmark
+    // thread is woken, so that the harness' own wake-up is not counted as IPC latency.
+    //
+    // Two rules keep this correct, given that mw::com may run two invocations at once:
+    //  - handler_mutex_ serialises all access to the proxy event (it is not thread-safe);
+    //  - the benchmark thread is woken only after GetNewSamples() has returned. Waking it from
+    //    inside the callback would let the next ping go out while this invocation is still reading.
     void OnPong() noexcept
     {
+        const std::lock_guard<std::mutex> handler_lock{handler_mutex_};
         const auto received_at = Clock::now();
+
+        std::optional<PongRecord> newest{};
         (void)pong_proxy_->pong_.GetNewSamples(
-            [this, received_at](score::mw::com::SamplePtr<PingPongPayload> pong) noexcept {
-                const PongRecord record{pong->sequence_id, received_at, IsIntact(*pong)};
+            [&newest, received_at](score::mw::com::SamplePtr<PingPongPayload> pong) noexcept {
+                if (!newest.has_value() || pong->sequence_id > newest->sequence_id)
                 {
-                    const std::lock_guard<std::mutex> lock{pong_mutex_};
-                    last_pong_ = record;
+                    newest = PongRecord{pong->sequence_id, received_at, IsIntact(*pong)};
                 }
-                pong_received_.notify_one();
             },
             kMaxSamplesPerSubscription);
+        if (!newest.has_value())
+        {
+            return;  // an earlier invocation already consumed the sample
+        }
+
+        {
+            const std::lock_guard<std::mutex> lock{pong_mutex_};
+            last_pong_ = *newest;
+        }
+        pong_received_.notify_one();
     }
 
     // Spot check of the first and last byte, so that the check itself stays O(1).
@@ -502,6 +523,7 @@ class Master final
 
     std::uint64_t last_sequence_id_{0U};  // benchmark thread only
 
+    std::mutex handler_mutex_;  // serialises OnPong(), see there. Lock order: handler_mutex_, then pong_mutex_.
     std::mutex pong_mutex_;
     std::condition_variable pong_received_;
     PongRecord last_pong_{};  // guarded by pong_mutex_

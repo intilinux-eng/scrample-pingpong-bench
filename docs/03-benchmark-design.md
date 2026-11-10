@@ -28,8 +28,8 @@ The first is the measurement. The second is the control that shows what the firs
 
 - **Start:** immediately before `Send()` in `BM_PingPong`, after the payload has been written.
   Writing N bytes is the application's work, not the transport's.
-- **End:** at the top of the Master's receive handler, before the benchmark thread is woken through
-  the condition variable. Waking the benchmark thread is harness overhead.
+- **End:** in the Master's receive handler, before it reads the sample and before the benchmark
+  thread is woken through the condition variable. Waking the benchmark thread is harness overhead.
 
 Still inside the measurement: the notification that triggers each receive handler, twice per round
 trip. That is a real part of event-driven `mw::com` latency and belongs there.
@@ -76,6 +76,27 @@ connect second, so the start order of the two processes does not matter.
 `RLIMIT_MEMLOCK` it can succeed while the process is small and then make later shared-memory
 mappings fail. The benchmark locks memory only as root or with an unlimited limit, and says so when
 it does not.
+
+## 11. Handlers take a lock, and the wake-up comes last
+
+The first version did all its work in the receive handlers without a lock, on the assumption that
+a handler for one event never runs twice at once. The first CI run disproved it: about half of the
+benchmark runs ended with "timed out waiting for the pong", and the short ones (few iterations)
+passed. That pattern, failure in proportion to the number of round trips, points to a race.
+
+The cause is in the middleware's dispatch. `mw::com` hands notifications to a pool of two worker
+threads. In a ping-pong the reply to message k+1 can arrive while the handler for message k is still
+returning, so the second worker enters the same handler. Both then call `GetNewSamples()` on the
+same proxy event, which is not thread-safe, and a sample goes missing.
+
+Two changes fixed it:
+
+- each handler holds a mutex for its whole body, so access to the proxy and skeleton is serialised;
+- the Master's handler wakes the benchmark thread only after `GetNewSamples()` has returned. Waking
+  it from inside the callback let the next ping go out while the handler was still reading.
+
+The lesson for benchmarks in general: a harness that sends the next message the moment the previous
+one is acknowledged is the worst case for this kind of overlap, and finds it quickly.
 
 ## Open questions and next experiments
 

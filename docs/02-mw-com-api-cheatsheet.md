@@ -68,8 +68,12 @@ The callable passed to `GetNewSamples` receives a `score::mw::com::SamplePtr<T>`
   announced.
 - **`numberOfSampleSlots` must exceed what subscribers may hold.** With every slot referenced by a
   subscriber, `Allocate()` fails. The benchmark uses 5 slots and `Subscribe(2)`.
-- **The receive handler runs on a middleware thread.** Anything it shares with the rest of the
-  program needs synchronisation.
+- **A receive handler can overlap with itself.** Notifications are dispatched on a pool of two
+  worker threads (`ThreadPool(2U, ...)` in `impl/bindings/lola/messaging/notify_event_handler.cpp`),
+  so the invocation for the next sample can start while the previous one is still returning. Proxy
+  events and skeleton events are not safe for concurrent use. A handler that calls
+  `GetNewSamples()`, `Allocate()` or `Send()` must take a lock first. The symptom of getting this
+  wrong is rare, silent loss of samples. See [03, section 11](03-benchmark-design.md).
 - **Runtime initialisation at 0.1.1** takes `(std::int32_t argc, score::StringLiteral argv[])` and
   looks for `-service_instance_manifest`. scrample passes exactly two elements: the flag and the
   path. An overload taking a `RuntimeConfiguration` also exists.
