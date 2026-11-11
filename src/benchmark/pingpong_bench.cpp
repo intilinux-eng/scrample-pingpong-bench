@@ -37,6 +37,36 @@
 //                         is application memory bandwidth, not the middleware.
 //
 // API usage follows score_communication v0.1.1 as pinned by scrample's MODULE.bazel.
+//
+// ---------------------------------------------------------------------------------------------
+// How to read this file (learning guide)
+// ---------------------------------------------------------------------------------------------
+// Comments that start with "Learning note" explain *why* a language feature or system call is
+// used, for readers who are new to C++, IPC or benchmarking. The other comments document the
+// design. Suggested reading order:
+//
+//   1. PingPongPayload       what travels through shared memory, and why its type is so strict
+//   2. Topic*Interface       how mw::com turns one C++ class into a sender and a receiver side
+//   3. Reflector             the side that answers: subscribe, receive, allocate, send
+//   4. Master::RoundTrip     the measured exchange: where the clock starts and stops
+//   5. Master::OnPong        how a result crosses from an mw::com thread to the benchmark thread
+//   6. RunPingPong           how Google Benchmark is told what to measure
+//   7. main()                start-up order, real-time preparations, shutdown
+//
+// Vocabulary used throughout:
+//   Skeleton  the providing side of a service (it "offers" and sends events). ara::com term.
+//   Proxy     the consuming side (it "finds" the service and subscribes to events).
+//   Event     a typed, one-way data channel of a service: here "ping" and "pong".
+//   Sample    one value sent on an event. In LoLa it is a slot in a shared-memory pool.
+//   RTT       round-trip time: ping out and pong back. One-way latency is estimated as RTT / 2.
+
+// Learning note: the headers below fall into three groups.
+//   - Google Benchmark: the measurement harness (iterations, statistics, JSON/CSV output).
+//   - score/mw/com: the middleware under test.
+//   - POSIX (<sys/mman.h>, <sys/resource.h>, <unistd.h>): mlockall(), getrlimit(), geteuid(),
+//     which the C++ standard library does not offer. They are used in LockMemory().
+//   - The C++ standard library for everything else. <atomic>, <mutex> and <condition_variable>
+//     are the thread-synchronisation tools; <chrono> is the clock.
 
 #include <benchmark/benchmark.h>
 
@@ -71,19 +101,37 @@
 #include <utility>
 #include <vector>
 
+// Learning note: an unnamed namespace gives everything inside it internal linkage, the modern
+// replacement for marking each function `static`. Nothing here can clash with a symbol of the
+// same name in the S-CORE libraries, and the compiler knows the code is used only in this file.
 namespace
 {
 
+// Learning note: this enables the literals 30s, 50ms, 2s used below. They produce typed
+// std::chrono durations, so the unit is part of the type and "2" can never be misread as
+// milliseconds when seconds were meant.
 using namespace std::chrono_literals;
 
 // steady_clock is CLOCK_MONOTONIC on Linux. high_resolution_clock is deliberately not used: in
 // libstdc++ it aliases system_clock, which can jump under NTP corrections.
 using Clock = std::chrono::steady_clock;
+// Learning note: steady_clock::now() costs about 20 ns on x86-64 Linux, because it reads the TSC
+// through the vDSO without a system call. That is small next to a ~10 µs round trip, but it is
+// one reason the clock is read only twice per iteration (send and receive).
 
+// Learning note: `constexpr` values are known at compile time. kMaxPayloadBytes in particular has
+// to be, because it sizes the std::array inside the payload type, and a type's size is fixed
+// when the program is compiled. The `{}` braces (list initialisation) reject narrowing
+// conversions, and the U suffix keeps the arithmetic unsigned. 10U << 20U is 10 * 2^20 = 10 MiB.
 constexpr std::size_t kMinPayloadBytes{64U};
 constexpr std::size_t kMaxPayloadBytes{10U << 20U};
 
 // Samples a subscriber may hold at once. Must stay below numberOfSampleSlots in mw_com_config.json.
+//
+// Learning note: the shared-memory pool of each event has a fixed number of slots (5 in the
+// manifest). Every slot is either being written by the sender, published, or held by a reader.
+// If readers could hold all of them, the sender's Allocate() would find no free slot and fail.
+// Keeping the per-subscriber limit (2) below the pool size leaves the sender room to work.
 constexpr std::size_t kMaxSamplesPerSubscription{2U};
 
 constexpr auto kDiscoveryTimeout{30s};
@@ -121,12 +169,39 @@ struct PingPongPayload
     std::array<std::uint8_t, kMaxPayloadBytes> data;
 };
 
+// Learning note: why std::array and not std::vector or std::string? A std::vector stores a
+// pointer to heap memory owned by the process that created it. Another process maps the shared
+// memory at a different address and has no access to that heap, so the pointer would be
+// meaningless or dangerous there. std::array keeps its bytes inline, inside the struct, so the
+// whole payload is one contiguous block that is valid wherever it is mapped.
+//
+// The two static_asserts turn that rule into a compile error instead of a runtime crash:
+//   - trivially copyable: no user-written copy/move/destructor logic, so the object can be
+//     treated as raw bytes (what memcpy and shared memory do);
+//   - standard layout: the member order and padding follow fixed rules, so two processes
+//     compiled from this file agree on where every field lives.
+// The fields are also ordered from largest to smallest alignment (8, 8, 4, 4, then bytes), which
+// avoids hidden padding between them.
 static_assert(std::is_trivially_copyable_v<PingPongPayload>, "payload is shared between processes as raw memory");
 static_assert(std::is_standard_layout_v<PingPongPayload>, "payload layout must be identical in both processes");
 
 // ---------------------------------------------------------------------------------------------
 // Service interfaces (mw::com's code-first equivalent of an ara::com IDL)
 // ---------------------------------------------------------------------------------------------
+//
+// Learning note: the "trait" pattern. Each interface is written once, as a class template over a
+// `Trait`. mw::com supplies two traits:
+//   - AsSkeleton<...> instantiates it with SkeletonTrait: Event<T> becomes a SkeletonEvent<T>,
+//     which has Allocate() and Send();
+//   - AsProxy<...> instantiates it with ProxyTrait: Event<T> becomes a ProxyEvent<T>, which has
+//     Subscribe(), SetReceiveHandler() and GetNewSamples().
+// So the sender and the receiver are generated from one definition and cannot disagree on the
+// event names or types. In ara::com the same thing is generated from an ARXML/IDL file instead.
+//
+// `typename` and `template` in `typename Trait::template Event<...>` are required by C++ because
+// `Trait` is a template parameter: without them the compiler cannot know that Event is a type
+// template rather than a value. `using Trait::Base::Base;` inherits the base class constructors.
+// The string "ping" must match "eventName" in etc/mw_com_config.json.
 
 template <typename Trait>
 class TopicAInterface : public Trait::Base
@@ -155,6 +230,11 @@ using TopicBProxy = score::mw::com::AsProxy<TopicBInterface>;
 // Process-wide state
 // ---------------------------------------------------------------------------------------------
 
+// Learning note: a signal handler may interrupt the program between any two instructions, so it
+// is allowed to do very little. Locking a mutex or printing from it can deadlock. Writing a
+// lock-free std::atomic is one of the few safe actions, so the handler only sets a flag and the
+// loops below check it. memory_order_relaxed is enough because the flag carries no other data
+// that would need to become visible together with it.
 std::atomic<bool> g_stop_requested{false};
 std::atomic<bool> g_benchmark_failed{false};
 
@@ -171,6 +251,16 @@ bool StopRequested() noexcept
 // ---------------------------------------------------------------------------------------------
 // mw::com helpers
 // ---------------------------------------------------------------------------------------------
+//
+// Learning note: error handling without exceptions. mw::com functions return a score::Result<T>
+// (similar to C++23 std::expected): it holds either a value or an error code, checked with
+// has_value() and read with value() or error(). Safety-related automotive code usually avoids
+// exceptions because their cost and control flow are hard to bound and to certify, so every
+// failure path here is an explicit `if`.
+//
+// Learning note: an "instance specifier" is a logical name ("score/benchmark/topic_a"). The
+// manifest (mw_com_config.json) maps it to a concrete service type, instance id and binding (SHM).
+// The code never names shared-memory files or ids, so deployment can change without recompiling.
 
 template <typename SkeletonType>
 std::unique_ptr<SkeletonType> CreateAndOffer(const std::string_view specifier_name)
@@ -189,7 +279,13 @@ std::unique_ptr<SkeletonType> CreateAndOffer(const std::string_view specifier_na
         return nullptr;
     }
 
+    // Learning note: `std::move(created).value()` moves the skeleton out of the Result instead of
+    // copying it. Skeletons own shared-memory resources and cannot be copied. The unique_ptr lets
+    // the owner create the skeleton later than its own constructor (in Offer()), use nullptr for
+    // "not created", and destroy it at a well-defined moment.
     auto skeleton = std::make_unique<SkeletonType>(std::move(created).value());
+    // OfferService() creates the shared-memory pools and announces the service so that proxies,
+    // in this process or another one, can find it.
     const auto offered = skeleton->OfferService();
     if (!offered.has_value())
     {
@@ -236,6 +332,10 @@ std::unique_ptr<ProxyType> FindAndCreate(const std::string_view specifier_name)
 // Reflector: subscribes to Topic_A and answers every ping with a pong on Topic_B.
 // ---------------------------------------------------------------------------------------------
 
+// Learning note: `final` forbids deriving from the class. Copy and move are deleted because the
+// receive handler captures `this`: if the object could be copied or moved, mw::com would still
+// call the handler with the old address. Deleting them makes that mistake impossible to compile.
+// This is the "rule of five": once one of the special members matters, decide all five.
 class Reflector final
 {
   public:
@@ -273,6 +373,12 @@ class Reflector final
         }
 
         // The handler is registered before subscribing so that no notification is missed.
+        //
+        // Learning note: event-driven reception. Instead of a thread that polls in a loop,
+        // mw::com calls the handler when a new sample is published. The handler takes no
+        // arguments; it only says "something arrived", and GetNewSamples() fetches the data.
+        // The lambda is `noexcept` because an exception escaping into mw::com's worker thread
+        // would terminate the program.
         auto& ping_event = ping_proxy_->ping_;
         if (!ping_event.SetReceiveHandler([this]() noexcept { OnPing(); }).has_value())
         {
@@ -299,6 +405,11 @@ class Reflector final
     void OnPing() noexcept
     {
         const std::lock_guard<std::mutex> handler_lock{handler_mutex_};
+        // Learning note: this is where zero-copy shows. SamplePtr is a read-only smart pointer
+        // straight into the sender's shared-memory slot: no bytes were copied to deliver it,
+        // whatever the payload size. While the SamplePtr exists the slot stays reserved for
+        // this reader; when it is destroyed (at the end of the lambda) the slot is released.
+        // `(void)` marks that the returned Result is ignored on purpose.
         (void)ping_proxy_->ping_.GetNewSamples(
             [this](score::mw::com::SamplePtr<PingPongPayload> ping) noexcept { Echo(*ping); },
             kMaxSamplesPerSubscription);
@@ -306,6 +417,9 @@ class Reflector final
 
     void Echo(const PingPongPayload& ping) noexcept
     {
+        // Learning note: Allocate() reserves a free slot in Topic_B's shared-memory pool and
+        // returns a writable pointer to it (SampleAllocateePtr). The pong is built in place, in
+        // the memory the Master will read, so Send() later does not copy it either.
         auto allocation = pong_skeleton_->pong_.Allocate();
         if (!allocation.has_value())
         {
@@ -326,6 +440,10 @@ class Reflector final
             std::memcpy(pong->data.data(), ping.data.data(), size);
         }
 
+        // Learning note: Send() takes the pointer by value, so std::move hands the slot over to
+        // the middleware. After this line `pong` is empty and the sender can no longer write to a
+        // sample that readers may already see. Ownership in the type system replaces a comment
+        // saying "do not touch after sending".
         if (!pong_skeleton_->pong_.Send(std::move(pong)).has_value())
         {
             failed_echoes_.fetch_add(1U, std::memory_order_relaxed);
@@ -334,6 +452,10 @@ class Reflector final
 
     // Declaration order matters: the proxy (and with it the handler that uses the skeleton) is
     // destroyed first.
+    //
+    // Learning note: C++ destroys members in the reverse order of their declaration. Declaring
+    // the skeleton first means it is destroyed last, so a handler still running on the proxy can
+    // never use a skeleton that is already gone.
     std::unique_ptr<TopicBSkeleton> pong_skeleton_;
     std::unique_ptr<TopicAProxy> ping_proxy_;
     std::mutex handler_mutex_;  // serialises OnPing(), see there
@@ -344,6 +466,9 @@ class Reflector final
 // Master: publishes pings on Topic_A and measures until the matching pong arrives on Topic_B.
 // ---------------------------------------------------------------------------------------------
 
+// Learning note: a plain struct with a nullable error message, not an exception or a
+// std::string. RoundTrip() runs inside the measured loop, where allocating memory would add
+// latency; string literals live in read-only memory and cost nothing to return.
 struct RoundTripResult
 {
     std::chrono::nanoseconds round_trip{0};
@@ -423,6 +548,9 @@ class Master final
                               const bool fill_payload,
                               const std::chrono::nanoseconds timeout) noexcept
     {
+        // Learning note: a fresh sequence id per ping lets the Master match each pong to its own
+        // ping. A late pong from an earlier, timed-out iteration therefore cannot end the wait.
+        // The fill byte changes with the id, so stale data from a reused slot is also detected.
         const auto sequence_id = ++last_sequence_id_;
         const auto fill = static_cast<std::uint8_t>(sequence_id);
 
@@ -440,15 +568,31 @@ class Master final
         ping->reserved = 0U;
         if (fill_payload)
         {
+            // Learning note: this is the O(N) part an application always pays: producing the
+            // data. At 10 MiB it is far bigger than the L2 cache (1 MiB per core on a Ryzen 7940HS),
+            // so it also pushes other data out of the caches. That side effect is why
+            // BM_PingPong_NoFill exists.
             std::memset(ping->data.data(), fill, payload_bytes);
         }
 
+        // Learning note: the clock starts here, after the fill. Everything from this point to
+        // the pong is middleware: publish, notify the reader, wake its thread, the Reflector's
+        // work, and the same on the way back.
         const auto send_time = Clock::now();
         if (!ping_skeleton_->ping_.Send(std::move(ping)).has_value())
         {
             return {0ns, "Send() failed on Topic_A"};
         }
 
+        // Learning note: the condition-variable pattern. wait_for() releases the mutex, sleeps
+        // until notified (or until the timeout), then re-locks the mutex and checks the
+        // predicate. The predicate is essential for two reasons:
+        //   - spurious wake-ups: a condition variable may wake without a notify;
+        //   - lost wake-ups: if the pong arrived before this thread started waiting, the
+        //     predicate is already true and wait_for() returns at once instead of sleeping.
+        // Sleeping instead of spinning keeps the CPU free, but costs a scheduler wake-up of a few
+        // microseconds. That wake-up is NOT in the measurement: the receive timestamp was taken
+        // in OnPong() before the notify.
         std::unique_lock<std::mutex> lock{pong_mutex_};
         const bool received = pong_received_.wait_for(lock, timeout, [this, sequence_id]() noexcept {
             return last_pong_.sequence_id == sequence_id;
@@ -502,6 +646,9 @@ class Master final
             return;  // an earlier invocation already consumed the sample
         }
 
+        // Learning note: the extra braces form a scope, so the lock is released before
+        // notify_one(). Notifying while holding the lock would let the woken thread run straight
+        // into a locked mutex and sleep again ("hurry up and wait").
         {
             const std::lock_guard<std::mutex> lock{pong_mutex_};
             last_pong_ = *newest;
@@ -554,6 +701,15 @@ struct LatencyStats
     double stddev{0.0};
 };
 
+// Learning note: why percentiles and not just the mean? Latency distributions are not
+// symmetric: most samples sit near the minimum and a few are much slower (a page fault, an
+// interrupt, a preemption). The mean hides those outliers; p99 and p99.9 show them. Real-time
+// systems are judged by the worst case, so max and p99.9 matter more than the average.
+// p50 (the median) is the "typical" value and is robust against outliers.
+//
+// The standard deviation below is the population form (divide by N), which is fine for the
+// thousands of samples a run collects.
+//
 // Sorts `samples` in place. Precondition: !samples.empty().
 LatencyStats Summarise(std::vector<double>& samples)
 {
@@ -612,6 +768,11 @@ void RunPingPong(benchmark::State& state, const EchoMode mode, const bool fill_p
     std::vector<double> one_way_ns;
     one_way_ns.reserve(static_cast<std::size_t>(state.max_iterations));
 
+    // Learning note: `for (auto _ : state)` is Google Benchmark's measured loop. The library
+    // decides how many iterations to run: it keeps going until the results are statistically
+    // stable or --benchmark_min_time has passed. With UseManualTime() (set in the registration
+    // below) it does not time the loop body itself; it adds up the values given to
+    // SetIterationTime(). That way only the round trip counts, not the bookkeeping around it.
     const auto wall_start = Clock::now();
     for (auto _ : state)
     {
@@ -680,6 +841,18 @@ static void BM_PingPong_FullEcho(benchmark::State& state)
 
 // Range(64, 10 << 20) with multiplier 8 yields 64 B, 512 B, 4 KiB, 32 KiB, 256 KiB, 2 MiB, 10 MiB.
 // Complexity() makes Google Benchmark fit and report the big-O curve over those sizes.
+//
+// Learning note: the BENCHMARK macro registers the function in a global list at program start
+// (static initialisation), and RunSpecifiedBenchmarks() in main() runs that list. The builder
+// calls configure each benchmark:
+//   RangeMultiplier/Range  the payload sizes, passed to the function as state.range(0)
+//   ArgName                the label in the output, e.g. "BM_PingPong/bytes:4096"
+//   UseManualTime          time = sum of SetIterationTime(), see RunPingPong()
+//   MinWarmUpTime(0.1)     0.1 s of unrecorded iterations first, so that caches, page tables
+//                          and CPU frequency settle before measuring
+//   Unit                   print microseconds
+//   Complexity             after the last size, fit O(1), O(N), O(N log N), ... and report the
+//                          best fit as the "_BigO" row, with its error as the "_RMS" row
 BENCHMARK(BM_PingPong)
     ->RangeMultiplier(8)
     ->Range(static_cast<std::int64_t>(kMinPayloadBytes), static_cast<std::int64_t>(kMaxPayloadBytes))
@@ -790,6 +963,11 @@ Options ParseOptions(const int argc, char** const argv)
 
 // Keeps page faults out of the measurement.
 //
+// Learning note: Linux maps memory lazily. A freshly allocated page is only backed by RAM when it
+// is first touched, and that first touch costs a page fault of a microsecond or more. The kernel
+// may also swap pages out later. mlockall(MCL_CURRENT | MCL_FUTURE) pins all current and future
+// pages in RAM, a standard step in real-time applications.
+//
 // Only attempted when the lock cannot run into RLIMIT_MEMLOCK (root, or an unlimited limit). With a
 // finite limit mlockall(MCL_FUTURE) may succeed while the process is still small and then make the
 // later shared-memory mappings and thread stacks fail, which is far worse than a few page faults.
@@ -823,11 +1001,18 @@ int main(int argc, char** argv)
         return EXIT_FAILURE;
     }
 
+    // Learning note: SIGINT is Ctrl+C, SIGTERM is what `kill` and the run script send. Handling
+    // them lets the loops stop cleanly, so the destructors run and the shared-memory files in
+    // /dev/shm are removed instead of being left behind.
     std::signal(SIGINT, HandleSignal);
     std::signal(SIGTERM, HandleSignal);
 
     LockMemory();
 
+    // Learning note: the runtime must be initialised before any skeleton or proxy is created. It
+    // reads the manifest and starts mw::com's internal threads, including the worker threads
+    // that later call the receive handlers.
+    //
     // Same call scrample's main.cpp makes (score_communication v0.1.1). Newer releases also accept
     // a score::mw::com::runtime::RuntimeConfiguration - check runtime.h if you bump the version.
     score::StringLiteral runtime_args[] = {"-service_instance_manifest", options.manifest.c_str()};
@@ -879,6 +1064,9 @@ int main(int argc, char** argv)
     benchmark::AddCustomContext("topology", options.role == Role::kBoth ? "single process" : "two processes");
     benchmark::AddCustomContext("slot_capacity_bytes", std::to_string(kMaxPayloadBytes));
 
+    // Learning note: BENCHMARK functions are plain functions without parameters for our objects,
+    // so they reach the Master through this global. It is a raw, non-owning pointer:
+    // `master` (the unique_ptr) still owns the object and destroys it at the end of main().
     g_master = master.get();
     benchmark::RunSpecifiedBenchmarks();
     benchmark::Shutdown();
