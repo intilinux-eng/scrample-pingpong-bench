@@ -1,0 +1,693 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>mw::com Ping-Pong Results</title>
+<meta name="description" content="Latency of score::mw::com zero-copy IPC from 64 B to 10 MiB, measured on Linux, with commentary for learning.">
+<style>
+:root {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface-1: #fcfcfb;
+  --text-primary: #0b0b0b;
+  --text-secondary: #52514e;
+  --text-muted: #898781;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --border: rgba(11, 11, 11, 0.10);
+  --series-1: #2a78d6;
+  --series-2: #eb6834;
+  --series-3: #1baf7a;
+  --accent-wash: rgba(42, 120, 214, 0.08);
+  --note-wash: rgba(235, 104, 52, 0.08);
+  --code-bg: #f0efec;
+}
+@media (prefers-color-scheme: dark) {
+  :root:where(:not([data-theme="light"])) {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface-1: #1a1a19;
+    --text-primary: #f0efec;
+    --text-secondary: #c3c2b7;
+    --text-muted: #898781;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --border: rgba(255, 255, 255, 0.10);
+    --series-1: #3987e5;
+    --series-2: #d95926;
+    --series-3: #199e70;
+    --accent-wash: rgba(57, 135, 229, 0.12);
+    --note-wash: rgba(217, 89, 38, 0.12);
+    --code-bg: #262624;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d;
+  --surface-1: #1a1a19;
+  --text-primary: #f0efec;
+  --text-secondary: #c3c2b7;
+  --text-muted: #898781;
+  --grid: #2c2c2a;
+  --axis: #383835;
+  --border: rgba(255, 255, 255, 0.10);
+  --series-1: #3987e5;
+  --series-2: #d95926;
+  --series-3: #199e70;
+  --accent-wash: rgba(57, 135, 229, 0.12);
+  --note-wash: rgba(217, 89, 38, 0.12);
+  --code-bg: #262624;
+}
+
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0;
+  background: var(--page);
+  color: var(--text-primary);
+  font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+main { max-width: 920px; margin: 0 auto; padding: 32px 16px 64px; }
+h1 { font-size: 1.9rem; line-height: 1.2; margin: 0 0 8px; }
+h2 { font-size: 1.35rem; margin: 48px 0 12px; line-height: 1.3; }
+h3 { font-size: 1.05rem; margin: 28px 0 8px; }
+p, li { color: var(--text-secondary); }
+strong { color: var(--text-primary); }
+a { color: var(--series-1); }
+code {
+  font: 0.88em/1.4 ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  background: var(--code-bg);
+  padding: 1px 5px;
+  border-radius: 4px;
+  overflow-wrap: anywhere;
+}
+pre {
+  background: var(--code-bg);
+  border-radius: 8px;
+  padding: 12px 14px;
+  overflow-x: auto;
+  font: 0.85rem/1.5 ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+pre code { background: none; padding: 0; }
+.lede { font-size: 1.1rem; margin: 0 0 20px; }
+
+.card {
+  background: var(--surface-1);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 20px;
+  margin: 20px 0;
+}
+.callout {
+  border-radius: 10px;
+  padding: 14px 16px;
+  margin: 20px 0;
+  background: var(--note-wash);
+}
+.callout p { margin: 0; }
+.lesson {
+  border-left: 3px solid var(--series-1);
+  background: var(--accent-wash);
+  border-radius: 0 10px 10px 0;
+  padding: 12px 16px;
+  margin: 16px 0;
+}
+.lesson p { margin: 0; }
+.lesson .tag {
+  display: block;
+  font-size: 0.78rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  margin-bottom: 4px;
+}
+
+.tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin: 24px 0; }
+.tile { background: var(--surface-1); border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px; }
+.tile .label { font-size: 0.85rem; color: var(--text-secondary); }
+.tile .value { font-size: 1.7rem; font-weight: 600; line-height: 1.25; margin: 2px 0; }
+.tile .sub { font-size: 0.82rem; color: var(--text-muted); }
+
+.chart-head { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-start; justify-content: space-between; }
+.chart-title { font-weight: 600; margin: 0; color: var(--text-primary); }
+.chart-sub { font-size: 0.88rem; margin: 2px 0 0; color: var(--text-secondary); }
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+.seg button {
+  font: inherit; font-size: 0.85rem; border: 0; background: transparent; color: var(--text-secondary);
+  padding: 6px 12px; cursor: pointer;
+}
+.seg button[aria-pressed="true"] { background: var(--accent-wash); color: var(--text-primary); font-weight: 600; }
+.seg button:focus-visible { outline: 2px solid var(--series-1); outline-offset: -2px; }
+
+.legend { display: flex; flex-wrap: wrap; gap: 6px 18px; margin: 14px 0 4px; font-size: 0.86rem; color: var(--text-secondary); }
+.legend span { display: inline-flex; align-items: center; gap: 6px; }
+.legend i { display: inline-block; width: 16px; height: 2px; border-radius: 1px; }
+
+.plot { position: relative; }
+.plot svg { display: block; width: 100%; height: auto; overflow: visible; }
+.plot svg:focus-visible { outline: 2px solid var(--series-1); outline-offset: 4px; border-radius: 4px; }
+.tick text, .axis-label { fill: var(--text-muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+.end-label { fill: var(--text-secondary); font-size: 11px; }
+.tooltip {
+  position: absolute; pointer-events: none; min-width: 170px;
+  background: var(--surface-1); border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12); padding: 8px 10px; font-size: 0.82rem; display: none; z-index: 2;
+}
+.tooltip .tt-head { color: var(--text-secondary); margin-bottom: 4px; }
+.tooltip .row { display: flex; align-items: center; gap: 8px; }
+.tooltip .row i { width: 12px; height: 2px; border-radius: 1px; flex: none; }
+.tooltip .row b { font-variant-numeric: tabular-nums; color: var(--text-primary); }
+.tooltip .row span { color: var(--text-secondary); }
+
+details { margin: 12px 0; }
+summary { cursor: pointer; color: var(--text-secondary); font-size: 0.9rem; }
+.table-wrap { overflow-x: auto; margin: 10px 0; }
+table { border-collapse: collapse; width: 100%; font-size: 0.85rem; }
+th, td { text-align: right; padding: 6px 10px; border-bottom: 1px solid var(--grid); font-variant-numeric: tabular-nums; white-space: nowrap; }
+th:first-child, td:first-child { text-align: left; }
+th { color: var(--text-secondary); font-weight: 600; }
+td { color: var(--text-primary); }
+caption { text-align: left; font-weight: 600; padding: 8px 0; color: var(--text-primary); }
+
+dl.context { display: grid; grid-template-columns: max-content 1fr; gap: 4px 16px; margin: 0; font-size: 0.9rem; }
+dl.context dt { color: var(--text-muted); }
+dl.context dd { margin: 0; color: var(--text-primary); }
+@media (max-width: 560px) {
+  dl.context { grid-template-columns: 1fr; }
+  dl.context dd { margin-bottom: 8px; }
+  h1 { font-size: 1.55rem; }
+}
+footer { margin-top: 56px; font-size: 0.85rem; color: var(--text-muted); }
+footer p { color: var(--text-muted); }
+</style>
+</head>
+<body>
+<main>
+
+<header>
+  <h1>Does zero-copy IPC stay constant from 64 B to 10 MiB?</h1>
+  <p class="lede">Measurements of <code>score::mw::com</code>, the shared-memory middleware of
+  Eclipse S-CORE, on a Linux laptop. Each section explains what a number means and why it looks
+  the way it does, so the page can be read as a lesson as well as a report.</p>
+</header>
+
+<div class="callout" role="note">
+  <p><strong>Read these numbers as a learning run, not a performance claim.</strong> The benchmark
+  ran pinned to fixed cores but under the normal Linux scheduler (no <code>SCHED_FIFO</code>, no
+  core isolation, no memory locking) on a laptop with a desktop session open. The <em>shape</em>
+  of each curve is trustworthy; the tail values (p99.9, max) would be much smaller on a tuned
+  real-time machine. See <a href="#next">what would make the numbers count</a>.</p>
+</div>
+
+<div class="tiles" id="tiles" aria-label="Headline results"></div>
+
+<h2>1. The experiment in one paragraph</h2>
+<p>A <strong>Master</strong> writes a <em>ping</em> into a shared-memory slot and publishes it on
+<code>Topic_A</code>. A <strong>Reflector</strong> is notified, reads the ping, and publishes a
+<em>pong</em> on <code>Topic_B</code>. The Master measures the round-trip time (RTT) from
+<code>Send()</code> until the pong arrives. This repeats tens of thousands of times for each of
+seven payload sizes, 64 B to 10 MiB (each step ×8, the last ×5). Three variants
+separate what the middleware costs from what the application's own memory work costs:</p>
+<ul>
+  <li><strong>BM_PingPong_NoFill</strong> — the payload bytes are never written. Only the transfer is
+  measured. <em>If the transfer is truly zero-copy, this curve must be flat.</em></li>
+  <li><strong>BM_PingPong</strong> — the Master writes all N bytes just <em>before</em> starting the
+  clock, like an application that has just produced its data.</li>
+  <li><strong>BM_PingPong_FullEcho</strong> — the write of N bytes is <em>inside</em> the timed region,
+  and the Reflector copies all N bytes back. This is the literal "send the same data back" flow, so
+  it must grow with N.</li>
+</ul>
+
+<h2>2. Round-trip time against payload size</h2>
+<div class="card">
+  <div class="chart-head">
+    <div>
+      <p class="chart-title">Round-trip time by payload size</p>
+      <p class="chart-sub">Median over 5 repetitions. Both axes are logarithmic.</p>
+    </div>
+    <div class="seg" role="group" aria-label="Topology">
+      <button type="button" data-run="0" aria-pressed="true">Single process</button>
+      <button type="button" data-run="1" aria-pressed="false">Two processes</button>
+    </div>
+  </div>
+  <div class="legend" id="legend-rtt"></div>
+  <div class="plot" id="plot-rtt"></div>
+  <details>
+    <summary>Show the numbers as a table</summary>
+    <div class="table-wrap" id="table-rtt"></div>
+  </details>
+</div>
+
+<h3>Lesson 1: zero-copy really is O(1)</h3>
+<p>The blue line (<strong>NoFill</strong>) stays flat at about <strong>6.6 µs</strong> in one process
+and about <strong>13.5 µs</strong> in two processes, whether the slot carries 64 bytes or 10 MiB.
+Google Benchmark fitted <strong>O(1) with an RMS error of 1 %</strong> in both topologies. That is
+the answer to the question at the top of the page: yes.</p>
+<div class="lesson"><span class="tag">Why it works</span>
+<p>A copying transport (a socket, a pipe) moves every byte through the kernel, so it pays
+O(N). mw::com's LoLa binding instead lets the sender <code>Allocate()</code> a slot that already lives
+in shared memory, write into it in place, and <code>Send()</code> only a small notification that
+says "slot k is ready". The receiver gets a <code>SamplePtr</code> that points into the same
+physical memory. No payload byte moves, so the size cannot matter.</p></div>
+
+<h3>Lesson 2: "not timed" does not mean "free"</h3>
+<p>The orange line (<strong>BM_PingPong</strong>) runs the same transfer, yet it climbs at the
+largest sizes: 6.6 µs → 8.0 µs at 2 MiB → 13.8 µs at 10 MiB in one process, and
+about 14 µs → 31.9 µs at 10 MiB in two processes. The only difference from NoFill is the
+<code>memset()</code> that runs <em>before</em> the clock starts.</p>
+<div class="lesson"><span class="tag">Why it happens</span>
+<p>This CPU has 1 MiB of L2 cache per core and 16 MiB of shared L3. Writing 2 MiB or 10 MiB
+streams through the caches and pushes out everything else, including the middleware's own
+control data, the thread stacks and the condition variable the benchmark waits on. The next
+round trip then finds them in slower cache levels or in RAM, and the
+dirty payload lines may still be draining to memory. Earlier work shapes later latency. In a real
+system, a big producer on the same core makes a small, latency-critical message slower even when
+nothing is copied.</p></div>
+<p>Look at the fitted complexity for this benchmark: O(log N) with an RMS error of about
+<strong>180 %</strong>. A fit that bad means "no simple curve matches". It is not evidence of
+logarithmic behaviour. <strong>Only trust a big-O fit when its RMS is small.</strong></p>
+
+<h3>Lesson 3: the application's memory work is O(N), and has cache cliffs</h3>
+<p>The aqua line (<strong>FullEcho</strong>) is flat up to 4 KiB, because writing and copying a
+few kilobytes takes well under a microsecond next to the ~7 µs fixed cost. Above that it grows with
+N, reaching about <strong>1 ms at 10 MiB</strong>. That millisecond is the <code>memset</code> plus the
+Reflector's <code>memcpy</code>, not the middleware: the NoFill line proves the transfer itself costs
+the same 6.6 µs.</p>
+<div class="lesson"><span class="tag">Do the arithmetic</span>
+<p>2 MiB → 10 MiB is 5× more data, but the RTT goes from about 129 µs to about 1 048 µs, 8× more.
+At 2 MiB the fill and the copy (about 6 MiB of traffic) still fit in the 16 MiB L3 cache, which
+gives roughly 50 GB/s. At 10 MiB the source and destination together (20 MiB) no longer fit, so
+the traffic goes to DRAM at roughly 30 GB/s. The CPU-time column of
+<code>BM_PingPong</code> shows the same cliff for the <code>memset</code> alone: about 24 µs for
+2 MiB (in cache), about 320 µs for 10 MiB (to RAM). Memory bandwidth is not one number; it
+depends on where the data lives. That is also why the O(N log N) fit for this benchmark (RMS about
+17 %) is a curve-fitting artefact: the real behaviour is "O(N), with a steeper slope once the data
+falls out of L3".</p></div>
+
+<h3>Lesson 4: crossing a process boundary costs about 7 µs per round trip</h3>
+<p>Switch the chart to <strong>Two processes</strong>: every curve moves up by the same amount,
+from about 6.6 µs to about 13.5 µs at small sizes, and the shapes stay the same. Shared memory
+removes the copy, but the <em>notification</em> still has to reach the other process.</p>
+<div class="lesson"><span class="tag">Why it happens</span>
+<p>In the mw::com source (<code>message_passing_service_instance.cpp</code>), a subscriber in the
+same process is notified by calling its receive handler directly
+(<code>NotifyEventLocally</code>). A subscriber in another process gets a message through a
+<strong>POSIX message queue</strong> (<code>score/mw/com/message_passing/mqueue</code>). That costs
+system calls and a thread wake-up in the receiving process, and a round trip crosses the boundary
+twice. A first guess was that each process, pinned to a single core, made its own threads compete
+for that core. A control run with <strong>two cores per process</strong> measured the same
+14.0–14.6 µs, which rules that out. Testing a hypothesis is cheap; guessing is not.</p></div>
+
+<h2>3. Tail latency: the number real-time systems care about</h2>
+<div class="card">
+  <p class="chart-title">One-way latency percentiles, NoFill at 4 KiB</p>
+  <p class="chart-sub">Median over 5 repetitions of each percentile. Logarithmic axis.</p>
+  <div class="legend" id="legend-tail"></div>
+  <div class="plot" id="plot-tail"></div>
+  <details>
+    <summary>Show the numbers as a table</summary>
+    <div class="table-wrap" id="table-tail"></div>
+  </details>
+</div>
+<p>The typical one-way latency (p50, the median) is about <strong>3.2 µs</strong> in one process.
+99 % of messages arrive within about 4.5 µs, and 99.9 % within about 7 µs. But the slowest message
+of a run takes <strong>tens to hundreds of microseconds</strong>, and in some runs well over 1 ms. The
+mean hides this completely: thousands of fast samples swamp a handful of slow ones.</p>
+<p>Notice that the two lines <em>cross</em> at the max: the single-process run, faster at every
+percentile, had the slower worst sample. A max is one sample out of about 100 000. It records
+whatever happened to disturb the run, not a property of the topology. That is why real-time
+validation runs for hours and reports the max together with the run length.</p>
+<div class="lesson"><span class="tag">Why it matters</span>
+<p>An airbag or a brake controller does not care about the average; it cares about the worst case.
+Under the normal scheduler, any other task, interrupt or kernel thread can take the core away
+from the benchmark for a while, and a page fault on first touch can add more. Those are the
+events that create the long tail.
+The real-time recipe in <a href="https://github.com/intilinux-eng/scrample-pingpong-bench/blob/main/docs/04-linux-realtime-tuning.md">docs/04</a>
+(isolated cores, <code>SCHED_FIFO</code>, <code>mlockall</code>, a fixed CPU frequency) attacks
+exactly these causes. It should shrink the max far more than the p50.</p></div>
+
+<h2>4. All numbers</h2>
+<p>Per benchmark and payload size: the median round trip, then one-way latency (RTT / 2)
+percentiles and the jitter (standard deviation). Each value is the median of the 5 repetitions.</p>
+<div class="seg" role="group" aria-label="Topology for the tables" id="seg-tables">
+  <button type="button" data-run="0" aria-pressed="true">Single process</button>
+  <button type="button" data-run="1" aria-pressed="false">Two processes</button>
+</div>
+<div id="tables-all"></div>
+
+<h2>5. How the run was made</h2>
+<div class="card"><dl class="context" id="context"></dl></div>
+<p>Reproduce it from a clone of the repository (Linux x86-64, GCC and Bazelisk installed):</p>
+<pre><code># build: --config=host carries the S-CORE feature flags (see .bazelrc)
+bazel build --config=host -c opt //src/benchmark:score_pingpong_bench
+BIN=bazel-bin/src/benchmark/score_pingpong_bench
+CFG=$PWD/src/benchmark/etc/mw_com_config.json
+
+# single process, pinned to cores 2 and 3
+taskset -c 2,3 $BIN --role=both --service_instance_manifest=$CFG \
+  --benchmark_repetitions=5 --benchmark_out=single.json --benchmark_out_format=json
+
+# two processes: reflector on core 3, master on core 2
+taskset -c 3 $BIN --role=reflector --service_instance_manifest=$CFG &
+taskset -c 2 $BIN --role=master --service_instance_manifest=$CFG \
+  --benchmark_repetitions=5 --benchmark_out=split.json --benchmark_out_format=json
+kill %1
+
+# condense for this page
+tools/summarise_results.py --label "single process" single.json \
+  --label "two processes" split.json --out site/data/results.json</code></pre>
+<p>Pick two cores that are <em>different physical cores</em>: on this CPU, logical CPUs 2 and 10
+are the two hyper-threads of one core, so 2 and 3 are used. Check yours with
+<code>cat /sys/devices/system/cpu/cpu2/topology/thread_siblings_list</code>.</p>
+
+<h2 id="next">6. What would make the numbers count</h2>
+<ol>
+  <li>Boot with <code>isolcpus=2,3 nohz_full=2,3 rcu_nocbs=2,3</code> so that nothing else runs on
+  the measurement cores.</li>
+  <li>Run <code>src/benchmark/run_benchmark.sh</code>. It adds <code>chrt -f 99</code>
+  (<code>SCHED_FIFO</code>) and, as root, <code>mlockall</code>.</li>
+  <li>Set the <code>performance</code> CPU governor and plug in the laptop. This run used
+  <code>powersave</code> with the <code>balance_performance</code> energy preference.</li>
+  <li>Check the machine itself with <code>cyclictest</code> on the same cores, so that a bad tail can
+  be blamed on the machine or the middleware, not guessed.</li>
+</ol>
+<p>Expected effect: the p50 hardly moves, while p99.9 and max should drop sharply. Seeing that
+happen is the best way to learn what real-time tuning actually buys.</p>
+
+<footer>
+  <p>Source, benchmark code with learning comments, and the knowledge base:
+  <a href="https://github.com/intilinux-eng/scrample-pingpong-bench">github.com/intilinux-eng/scrample-pingpong-bench</a>.
+  Raw data for this page: <a href="data/results.json">data/results.json</a>.</p>
+</footer>
+</main>
+
+<div class="tooltip" id="tooltip" role="status" aria-live="polite"></div>
+
+<!-- Generated by tools/summarise_results.py; defines window.PINGPONG_RESULTS. -->
+<script src="data/results.js"></script>
+<script>
+(function () {
+  "use strict";
+
+  var BENCH = [
+    { key: "BM_PingPong_NoFill", name: "NoFill (transfer only)", color: "--series-1" },
+    { key: "BM_PingPong", name: "PingPong (filled before timing)", color: "--series-2" },
+    { key: "BM_PingPong_FullEcho", name: "FullEcho (fill + copy timed)", color: "--series-3" }
+  ];
+  var TOPO = [
+    { name: "Single process", tiny: "Single", color: "--series-1" },
+    { name: "Two processes", tiny: "Two", color: "--series-2" }
+  ];
+  var PCTL = [
+    { key: "oneway_p50_ns", name: "p50" },
+    { key: "oneway_p99_ns", name: "p99" },
+    { key: "oneway_p999_ns", name: "p99.9" },
+    { key: "oneway_max_ns", name: "max" }
+  ];
+  var SVGNS = "http://www.w3.org/2000/svg";
+  var tooltip = document.getElementById("tooltip");
+
+  function el(tag, attrs, parent) {
+    var node = document.createElementNS(SVGNS, tag);
+    for (var k in attrs) node.setAttribute(k, attrs[k]);
+    if (parent) parent.appendChild(node);
+    return node;
+  }
+  function h(tag, text, parent) {
+    var node = document.createElement(tag);
+    if (text != null) node.textContent = text;
+    if (parent) parent.appendChild(node);
+    return node;
+  }
+  function us(v) {
+    if (v >= 1000) return Math.round(v).toLocaleString("en-US") + " µs";
+    if (v >= 100) return v.toFixed(0) + " µs";
+    if (v >= 10) return v.toFixed(1) + " µs";
+    return v.toFixed(2) + " µs";
+  }
+  function tickLabel(v) {
+    if (v >= 1000) return (v / 1000) + " ms";
+    return v + " µs";
+  }
+  function bigO(s) { return { "(1)": "O(1)", "lgN": "O(log N)", "N": "O(N)", "NlgN": "O(N log N)", "N^2": "O(N²)", "N^3": "O(N³)" }[s] || s; }
+  function find(run, key) { return run.benchmarks[key] ? run.benchmarks[key].rows : []; }
+
+  // ---------------------------------------------------------------------------------------
+  // Generic line chart: x positions are numbers, y is logarithmic (values in µs).
+  // ---------------------------------------------------------------------------------------
+  function lineChart(container, cfg) {
+    container.textContent = "";
+    // Draw at the container's real width so that text keeps its 11px size on a phone.
+    var W = Math.max(300, Math.round(container.clientWidth || 860));
+    var narrow = W < 560;
+    var H = narrow ? 300 : 380, m = { t: 16, r: narrow ? 104 : 150, b: 44, l: narrow ? 48 : 64 };
+    var iw = W - m.l - m.r, ih = H - m.t - m.b;
+    var everyOther = iw / cfg.xs.length < 56;  // thin out x labels when they would touch
+    var svg = el("svg", { viewBox: "0 0 " + W + " " + H, role: "img", tabindex: "0",
+      "aria-label": cfg.aria }, container);
+
+    var yMin = cfg.yTicks[0], yMax = cfg.yTicks[cfg.yTicks.length - 1];
+    var ly = function (v) { return Math.log10(v); };
+    var y = function (v) { return m.t + ih - (ly(v) - ly(yMin)) / (ly(yMax) - ly(yMin)) * ih; };
+    var xs = cfg.xs, x0 = xs[0], x1 = xs[xs.length - 1];
+    var x = function (v) { return m.l + (v - x0) / (x1 - x0) * iw; };
+
+    var grid = el("g", {}, svg);
+    cfg.yTicks.forEach(function (t) {
+      el("line", { x1: m.l, x2: m.l + iw, y1: y(t), y2: y(t), stroke: "var(--grid)", "stroke-width": 1 }, grid);
+      var g = el("g", { "class": "tick" }, grid);
+      var tx = el("text", { x: m.l - 8, y: y(t) + 4, "text-anchor": "end" }, g);
+      tx.textContent = tickLabel(t);
+    });
+    el("line", { x1: m.l, x2: m.l + iw, y1: m.t + ih, y2: m.t + ih, stroke: "var(--axis)", "stroke-width": 1 }, grid);
+    xs.forEach(function (v, i) {
+      if (everyOther && i % 2 === 1 && i !== xs.length - 1) return;
+      var g = el("g", { "class": "tick" }, grid);
+      var tx = el("text", { x: x(v), y: m.t + ih + 18, "text-anchor": "middle" }, g);
+      tx.textContent = cfg.xLabels[i];
+    });
+    if (cfg.xTitle) {
+      var xt = el("text", { "class": "axis-label", x: m.l + iw / 2, y: H - 6, "text-anchor": "middle" }, svg);
+      xt.textContent = cfg.xTitle;
+    }
+
+    var cross = el("line", { y1: m.t, y2: m.t + ih, stroke: "var(--axis)", "stroke-width": 1, visibility: "hidden" }, svg);
+
+    // Lines, end markers and end labels.
+    var labelY = [];
+    cfg.series.forEach(function (s) {
+      var pts = s.values.map(function (v, i) { return [x(xs[i]), y(v)]; });
+      el("path", { d: "M" + pts.map(function (p) { return p[0].toFixed(1) + "," + p[1].toFixed(1); }).join("L"),
+        fill: "none", stroke: "var(" + s.color + ")", "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }, svg);
+      pts.forEach(function (p) {
+        el("circle", { cx: p[0], cy: p[1], r: 4, fill: "var(" + s.color + ")", stroke: "var(--surface-1)", "stroke-width": 2 }, svg);
+      });
+      var last = pts[pts.length - 1];
+      labelY.push({ y: last[1], s: s, x: last[0] });
+    });
+    // Leader lines when end labels would collide: spread labels at least 14px apart.
+    labelY.sort(function (a, b) { return a.y - b.y; });
+    for (var i = 1; i < labelY.length; i++) {
+      if (labelY[i].y - labelY[i - 1].y < 14) labelY[i].ly = (labelY[i - 1].ly || labelY[i - 1].y) + 14;
+    }
+    labelY.forEach(function (L) {
+      var ty = L.ly || L.y;
+      if (L.ly) el("line", { x1: L.x + 6, y1: L.y, x2: L.x + 14, y2: ty, stroke: "var(--axis)", "stroke-width": 1 }, svg);
+      var t = el("text", { "class": "end-label", x: L.x + 16, y: ty + 4 }, svg);
+      t.textContent = (narrow ? L.s.tiny || L.s.short : L.s.short) + " " + us(L.s.values[L.s.values.length - 1]);
+    });
+
+    // Crosshair + one tooltip for every series, on pointer and keyboard.
+    var hit = el("rect", { x: m.l - 20, y: m.t, width: iw + 40, height: ih, fill: "transparent" }, svg);
+    var current = -1;
+    function show(idx) {
+      current = idx;
+      var px = x(xs[idx]);
+      cross.setAttribute("x1", px); cross.setAttribute("x2", px); cross.setAttribute("visibility", "visible");
+      tooltip.textContent = "";
+      h("div", cfg.xLabels[idx] + (cfg.tipSuffix || ""), tooltip).className = "tt-head";
+      cfg.series.slice().sort(function (a, b) { return b.values[idx] - a.values[idx]; }).forEach(function (s) {
+        var row = h("div", null, tooltip); row.className = "row";
+        var key = h("i", null, row); key.style.background = "var(" + s.color + ")";
+        h("b", us(s.values[idx]), row);
+        h("span", s.short, row);
+      });
+      tooltip.style.display = "block";
+      var box = container.getBoundingClientRect();
+      var scale = box.width / W;
+      var left = box.left + window.scrollX + px * scale + 12;
+      var tw = tooltip.offsetWidth;
+      if (left + tw > window.scrollX + document.documentElement.clientWidth - 8) left = box.left + window.scrollX + px * scale - tw - 12;
+      tooltip.style.left = Math.max(8, left) + "px";
+      tooltip.style.top = (box.top + window.scrollY + m.t * scale) + "px";
+    }
+    function hide() { cross.setAttribute("visibility", "hidden"); tooltip.style.display = "none"; current = -1; }
+    hit.addEventListener("pointermove", function (ev) {
+      var r = svg.getBoundingClientRect();
+      var vx = (ev.clientX - r.left) / r.width * W;
+      var best = 0;
+      xs.forEach(function (v, i) { if (Math.abs(x(v) - vx) < Math.abs(x(xs[best]) - vx)) best = i; });
+      show(best);
+    });
+    hit.addEventListener("pointerleave", hide);
+    svg.addEventListener("focus", function () { show(current < 0 ? 0 : current); });
+    svg.addEventListener("blur", hide);
+    svg.addEventListener("keydown", function (ev) {
+      if (ev.key === "ArrowRight") { show(Math.min(xs.length - 1, current + 1)); ev.preventDefault(); }
+      if (ev.key === "ArrowLeft") { show(Math.max(0, current - 1)); ev.preventDefault(); }
+      if (ev.key === "Escape") hide();
+    });
+  }
+
+  function legend(node, items) {
+    node.textContent = "";
+    items.forEach(function (it) {
+      var s = h("span", null, node);
+      var i = h("i", null, s); i.style.background = "var(" + it.color + ")";
+      s.appendChild(document.createTextNode(it.name));
+    });
+  }
+
+  function table(node, caption, head, rows) {
+    var t = h("table", null, node);
+    if (caption) h("caption", caption, t);
+    var tr = h("tr", null, h("thead", null, t));
+    head.forEach(function (c) { h("th", c, tr).setAttribute("scope", "col"); });
+    var tb = h("tbody", null, t);
+    rows.forEach(function (r) {
+      var row = h("tr", null, tb);
+      r.forEach(function (c) { h("td", c, row); });
+    });
+  }
+
+  function render(data) {
+    var runs = data.runs;
+
+    // Headline tiles.
+    var single = runs[0], split = runs[1];
+    var nf1 = find(single, "BM_PingPong_NoFill"), nf2 = find(split, "BM_PingPong_NoFill");
+    var fe1 = find(single, "BM_PingPong_FullEcho");
+    var tiles = document.getElementById("tiles");
+    function tile(label, value, sub) {
+      var d = h("div", null, tiles); d.className = "tile";
+      h("div", label, d).className = "label";
+      h("div", value, d).className = "value";
+      h("div", sub, d).className = "sub";
+    }
+    var r64 = nf1[0].rtt_us, r10 = nf1[nf1.length - 1].rtt_us;
+    tile("Transfer, 64 B", us(r64), "round trip, single process");
+    tile("Transfer, 10 MiB", us(r10), "same transfer, 163 840× the payload");
+    tile("Fitted complexity", bigO(single.benchmarks.BM_PingPong_NoFill.big_o),
+      "NoFill, RMS " + Math.round(single.benchmarks.BM_PingPong_NoFill.rms * 100) + " %");
+    tile("Two processes", us(nf2[0].rtt_us), "same transfer across a process boundary");
+    tile("FullEcho, 10 MiB", us(fe1[fe1.length - 1].rtt_us), "fill + copy: the O(N) part");
+
+    // Chart 1: RTT vs size.
+    var sizes = nf1.map(function (r) { return r.bytes; });
+    var labels = nf1.map(function (r) { return r.label; });
+    var xsLog = sizes.map(function (b) { return Math.log2(b); });
+    var shorts = { BM_PingPong_NoFill: "NoFill", BM_PingPong: "PingPong", BM_PingPong_FullEcho: "FullEcho" };
+    legend(document.getElementById("legend-rtt"), BENCH);
+    var runIdx = 0;
+    function drawRtt() {
+      var run = runs[runIdx];
+      var series = BENCH.map(function (b) {
+        return { color: b.color, short: shorts[b.key], values: find(run, b.key).map(function (r) { return r.rtt_us; }) };
+      });
+      lineChart(document.getElementById("plot-rtt"), {
+        aria: "Line chart of round-trip time against payload size, " + run.label + ". NoFill stays flat; FullEcho grows to about 1 ms at 10 MiB.",
+        xs: xsLog, xLabels: labels, xTitle: "payload size", yTicks: [1, 10, 100, 1000, 10000], series: series, tipSuffix: " payload"
+      });
+      var tw = document.getElementById("table-rtt"); tw.textContent = "";
+      table(tw, "Median round-trip time, " + run.label, ["Payload"].concat(BENCH.map(function (b) { return shorts[b.key]; })),
+        labels.map(function (l, i) { return [l].concat(series.map(function (s) { return us(s.values[i]); })); }));
+    }
+    document.querySelectorAll(".chart-head .seg button").forEach(function (b) {
+      b.addEventListener("click", function () {
+        runIdx = +b.dataset.run;
+        b.parentNode.querySelectorAll("button").forEach(function (o) { o.setAttribute("aria-pressed", o === b ? "true" : "false"); });
+        drawRtt();
+      });
+    });
+    drawRtt();
+
+    // Chart 2: percentiles, NoFill at 4 KiB, both topologies.
+    var at = function (run) { return find(run, "BM_PingPong_NoFill").filter(function (r) { return r.bytes === 4096; })[0]; };
+    legend(document.getElementById("legend-tail"), TOPO);
+    var tailSeries = runs.map(function (run, i) {
+      var row = at(run);
+      return { color: TOPO[i].color, short: TOPO[i].name, tiny: TOPO[i].tiny, values: PCTL.map(function (p) { return row[p.key] / 1000; }) };
+    });
+    function drawTail() {
+      lineChart(document.getElementById("plot-tail"), {
+        aria: "Percentiles of one-way latency for NoFill at 4 KiB. p50 is a few microseconds; the maximum is tens to hundreds of microseconds.",
+        xs: [0, 1, 2, 3], xLabels: PCTL.map(function (p) { return p.name; }), xTitle: "percentile",
+        yTicks: [1, 10, 100, 1000], series: tailSeries
+      });
+    }
+    drawTail();
+
+    // Charts are drawn at their real pixel width, so redraw when that width changes.
+    var lastWidth = document.getElementById("plot-rtt").clientWidth, pending = 0;
+    window.addEventListener("resize", function () {
+      cancelAnimationFrame(pending);
+      pending = requestAnimationFrame(function () {
+        var w = document.getElementById("plot-rtt").clientWidth;
+        if (w !== lastWidth) { lastWidth = w; tooltip.style.display = "none"; drawRtt(); drawTail(); }
+      });
+    });
+    table(document.getElementById("table-tail"), "One-way latency, NoFill at 4 KiB", ["Percentile"].concat(TOPO.map(function (t) { return t.name; })),
+      PCTL.map(function (p, i) { return [p.name].concat(tailSeries.map(function (s) { return us(s.values[i]); })); }));
+
+    // All tables.
+    var tablesRun = 0;
+    function drawTables() {
+      var node = document.getElementById("tables-all"); node.textContent = "";
+      var run = runs[tablesRun];
+      BENCH.forEach(function (b) {
+        var bench = run.benchmarks[b.key];
+        var cap = b.key + " — fitted " + bigO(bench.big_o) + ", RMS " + Math.round(bench.rms * 100) + " %";
+        var wrap = h("div", null, node); wrap.className = "table-wrap";
+        table(wrap, cap, ["Payload", "RTT", "p50", "p99", "p99.9", "max", "jitter σ", "round trips/s"],
+          bench.rows.map(function (r) {
+            return [r.label, us(r.rtt_us), us(r.oneway_p50_ns / 1000), us(r.oneway_p99_ns / 1000), us(r.oneway_p999_ns / 1000),
+              us(r.oneway_max_ns / 1000), us(r.jitter_stddev_ns / 1000), Math.round(1e6 / r.rtt_us).toLocaleString("en-US")];
+          }));
+      });
+    }
+    document.querySelectorAll("#seg-tables button").forEach(function (b) {
+      b.addEventListener("click", function () {
+        tablesRun = +b.dataset.run;
+        b.parentNode.querySelectorAll("button").forEach(function (o) { o.setAttribute("aria-pressed", o === b ? "true" : "false"); });
+        drawTables();
+      });
+    });
+    drawTables();
+
+    // Context.
+    var dl = document.getElementById("context");
+    function ctx(k, v) { h("dt", k, dl); h("dd", v, dl); }
+    ctx("Date", data.date);
+    ctx("Commit", data.commit);
+    ctx("Machine", data.machine);
+    ctx("Setup", data.setup);
+    runs.forEach(function (run) {
+      var c = run.context;
+      ctx("Load at start (" + run.label + ")", c.load_avg.map(function (v) { return v.toFixed(1); }).join(" / ") + " (1 / 5 / 15 min)");
+    });
+    ctx("Library", "Google Benchmark " + single.context.library_version + ", " + single.context.transport);
+  }
+
+  try {
+    if (!window.PINGPONG_RESULTS) throw new Error("data/results.js did not load");
+    render(window.PINGPONG_RESULTS);
+  } catch (e) {
+    var p = h("p", "Could not render the results: " + e.message, document.getElementById("tiles"));
+    p.style.gridColumn = "1 / -1";
+  }
+})();
+</script>
+</body>
+</html>

@@ -46,13 +46,23 @@ In the CI smoke test (a shared 2-vCPU runner, so the shape counts, not the value
 trip from 64 B to 10 MiB was 14.7 to 16.5 µs for `BM_PingPong_NoFill`, with a fitted complexity of
 O(1), and grew from 15.5 µs to 1156 µs for `BM_PingPong_FullEcho`.
 
+**Results page:** the first native Linux run (a Ryzen 9 7940HS laptop, pinned cores, normal
+scheduler) is published with charts and a commented walk-through at
+**<https://intilinux-eng.github.io/scrample-pingpong-bench/>**. The round trip for
+`BM_PingPong_NoFill` was 6.6 µs in one process and 13.5 µs in two, flat from 64 B to 10 MiB, with a
+fitted O(1) and 1 % RMS. The page explains each curve and what it teaches.
+
 ## Quick start
 
 Everything builds and runs on **Linux x86-64** only. On Windows, open the folder in WSL 2 or in the
 dev container; both are functional environments, not real-time ones (see
 [Status and limits](#status-and-limits)).
 
-**Step 1 (preferred: WSL 2 (Ubuntu).** Clone inside the Linux file system, not under `/mnt/c`.
+**Native Linux (tested on Ubuntu 26.10, GCC 15).** Same steps as for WSL 2 below. Without sudo,
+Bazelisk can also live in `~/.local/bin/bazel`. GCC 15 needs the `<algorithm>` force-include that
+`.bazelrc` adds to `--config=host`; it is a no-op on older compilers.
+
+**Step 1 (preferred on Windows): WSL 2 (Ubuntu).** Clone inside the Linux file system, not under `/mnt/c`.
 
 ```bash
 sudo apt update && sudo apt install -y build-essential git util-linux
@@ -122,9 +132,12 @@ src/benchmark/
   etc/mw_com_config.json    mw::com manifest: Topic_A and Topic_B on the shared-memory binding
   run_benchmark.sh          opt build + pinned SCHED_FIFO run
 docs/                       knowledge base (see below)
+site/                       results page published to GitHub Pages (index.html + data/)
+tools/summarise_results.py  Google Benchmark JSON -> site/data/results.{json,js} + Markdown tables
 MODULE.bazel, .bazelrc      S-CORE dependencies and flags, mirrored from eclipse-score/scrample
 .vscode/, .devcontainer/    tasks, debug configuration, IntelliSense paths, container
 .github/workflows/build.yml build and smoke test on every push
+.github/workflows/pages.yml deploys site/ to GitHub Pages
 ```
 
 ## Knowledge base
@@ -154,13 +167,19 @@ bazel_dep(name = "google_benchmark", version = "1.9.5", repo_name = "com_github_
 
 - **Build and smoke test:** see the badge above. CI builds the binary and runs both topologies
   briefly on a shared runner.
-- **Real-time measurements:** none recorded yet. Numbers from CI, WSL 2, a container or a VM show
+- **Real-time measurements:** none recorded yet. A bare-metal but non-real-time learning run
+  (pinned cores, normal scheduler) is in the [results log](docs/results-log.md) and on the
+  [results page](https://intilinux-eng.github.io/scrample-pingpong-bench/). Numbers from CI, WSL 2, a container or a VM show
   that the benchmark works, not how fast `mw::com` is. Results that count need a bare-metal Linux
   machine set up as in [docs/04](docs/04-linux-realtime-tuning.md), and belong in the
   [results log](docs/results-log.md).
 - **Versions:** written against `score_communication` 0.1.1 and `score_baselibs` 0.1.3, the versions
   scrample pins. The `mw::com` API changes between releases.
 - **Memory:** about 100 MiB of `/dev/shm` (5 slots × 10 MiB × 2 topics).
+- **Leftover shared memory:** after a two-process run, `/dev/shm/lola-ctl-…6433-…` and
+  `lola-data-…6433-…` (Topic_A, offered by the Master) were still present on Linux after both
+  processes had exited. When no benchmark process is running, they can be removed with
+  `rm /dev/shm/lola-*-0000000000006433-*`.
 - **Shutdown message:** in two-process mode the Reflector can log
   `Sending UnregisterEventNotificationMessage ... failed` when the Master has already exited. It is
   harmless.
