@@ -4,6 +4,133 @@ Measured runs go here, newest first. A number without its context cannot be comp
 every entry records the machine and the setup. Do not log runs from CI, WSL 2, containers or VMs as
 performance results.
 
+## 2026-11-14, S-CORE v0.10.0 against v0.5.0-alpha, same laptop (learning run, A/B)
+
+The benchmark moved to S-CORE platform release v0.10.0. To see what that changed, the binary of each
+version ran on the same machine with the same settings, alternating: old single, new single, old
+split, new split. The whole comparison was made twice. Not a real-time result, for the same reasons
+as the entry below. The chart is in section 7 of the
+[results page](https://intilinux-eng.github.io/scrample-pingpong-bench/#versions).
+
+| | |
+|---|---|
+| Commits | `118374c` (v0.5.0-alpha: `score_communication` 0.1.1, `score_baselibs` 0.1.3) and `ff41bd7` (v0.10.0: `score_communication` 0.6.0, `score_baselibs` 0.2.17) |
+| Machine | AMD Ryzen 9 7940HS, 8 cores / 16 threads (Zen 4), 1 MiB L2 per core, 16 MiB L3, 28 GiB RAM |
+| Kernel | `7.3.0-10-generic` (Ubuntu 26.10), PREEMPT_RT: no (PREEMPT_DYNAMIC) |
+| Compiler | GCC 15.3, `-c opt` |
+| Boot parameters | none (`quiet splash`) |
+| Governor | performance (amd-pstate, EPP `performance`); the 2026-11-11 run used powersave |
+| Topology | single process on cores 2,3 / two processes, Master core 2, Reflector core 3; `SCHED_OTHER` via `taskset`, no `chrt` |
+| cyclictest max | not measured |
+| Repetitions | 5 per run; every value below is the median over the repetitions |
+| Passes | 2. Pass 1 (2026-11-13, 23:46–23:59 local time) used a v0.10.0 build with `score_baselibs` 0.2.16; pass 2 (2026-11-14, 00:03–00:16) the exact binary of `ff41bd7`. Tables below are pass 2 |
+| Raw data | local and untracked; condensed in [`site/data/compare.json`](../site/data/compare.json) |
+
+### `BM_PingPong_NoFill`, both versions
+
+| Topology | Measure | v0.5.0-alpha | v0.10.0 | Change |
+|---|---|---|---|---|
+| single process | round trip, 64 B – 10 MiB | 6.65–6.91 µs | 5.12–5.26 µs | −22 to −25 % (pass 1: −22 to −25 %) |
+| single process | one-way p50 | 3.22–3.36 µs | 2.54–2.57 µs | −21 to −24 % |
+| two processes | round trip, 64 B – 10 MiB | 13.14–13.53 µs | 12.00–12.35 µs | −7 to −11 % (pass 1: −1 to −17 %) |
+| two processes | one-way p50 | 6.47–6.62 µs | 5.91–6.07 µs | −7 to −11 % (pass 1: −5 to −9 %) |
+| both | fitted complexity | O(1), RMS 2 % | O(1), RMS 1–2 % | |
+
+### Observations
+
+- **Zero-copy still holds.** All four runs fit O(1) with 1–2 % RMS.
+- **One process is about 23 % faster at v0.10.0**, at every payload size, in both passes. This is
+  the clearest change. `BM_PingPong` and `BM_PingPong_FullEcho` also drop by 2–4 µs up to
+  256 KiB. Above that the application's memory work dominates and the versions converge: FullEcho
+  changed by −7 % and 0 % at 2 MiB, and by −4 % and 0 % at 10 MiB, in passes 1 and 2.
+- **Two processes are slightly faster.** The one-way p50 went down by about 0.5 µs in both passes.
+  The process-boundary cost is still about 7 µs per round trip.
+- **Not explained yet.** The notification path is the same algorithm in both versions (moved from
+  `NotifyEventHandler` to `MessagePassingServiceInstance`). Candidates: `score_baselibs`
+  (thread pool, synchronisation), the read path, compiler flags from newer Bazel rules. Next step:
+  `perf` on both binaries.
+- **Noise to ignore.** Pass 1 showed `FullEcho` at 2 MiB across two processes 50 % slower; pass 2
+  showed it 5 % faster. Tails (p99.9, max) moved in both directions. With the normal scheduler these
+  values record disturbances, not versions.
+- **Before pass 2 the 1-minute load was 11.9**, left over from a Bazel build that had just finished.
+  It had fallen to 2.3 by the end. The single-process v0.5.0-alpha run, which came first, may be
+  slightly penalised; pass 1 (load 1.7 at start) gave the same result.
+
+#### v0.10.0, single process (cores 2,3)
+
+**BM_PingPong**, fitted complexity lgN, RMS 184 %
+
+| Payload | RTT (µs) | one-way p50 (ns) | p99 (ns) | p99.9 (ns) | max (ns) | jitter stddev (ns) |
+|---|---|---|---|---|---|---|
+| 64 B | 5.1 | 2540 | 3201 | 4638 | 14692 | 178 |
+| 512 B | 5.2 | 2550 | 3501 | 5044 | 47721 | 257 |
+| 4 KiB | 5.1 | 2550 | 3376 | 4764 | 45567 | 254 |
+| 32 KiB | 5.1 | 2544 | 3346 | 4824 | 105490 | 394 |
+| 256 KiB | 5.3 | 2580 | 4042 | 7148 | 504305 | 1597 |
+| 2 MiB | 7.1 | 3416 | 6006 | 9823 | 440434 | 1889 |
+| 10 MiB | 10.8 | 4514 | 13490 | 93248 | 744584 | 8490 |
+
+**BM_PingPong_NoFill**, fitted complexity (1), RMS 1 %
+
+| Payload | RTT (µs) | one-way p50 (ns) | p99 (ns) | p99.9 (ns) | max (ns) | jitter stddev (ns) |
+|---|---|---|---|---|---|---|
+| 64 B | 5.3 | 2574 | 3892 | 7028 | 307805 | 956 |
+| 512 B | 5.1 | 2550 | 3411 | 4748 | 37633 | 244 |
+| 4 KiB | 5.2 | 2554 | 3472 | 5130 | 53000 | 307 |
+| 32 KiB | 5.2 | 2550 | 3341 | 4754 | 27009 | 201 |
+| 256 KiB | 5.2 | 2565 | 3646 | 6346 | 116030 | 480 |
+| 2 MiB | 5.2 | 2544 | 3576 | 6051 | 47125 | 461 |
+| 10 MiB | 5.1 | 2540 | 2946 | 4553 | 18128 | 173 |
+
+**BM_PingPong_FullEcho**, fitted complexity NlgN, RMS 13 %
+
+| Payload | RTT (µs) | one-way p50 (ns) | p99 (ns) | p99.9 (ns) | max (ns) | jitter stddev (ns) |
+|---|---|---|---|---|---|---|
+| 64 B | 5.3 | 2605 | 3010 | 4533 | 19435 | 161 |
+| 512 B | 5.3 | 2610 | 3010 | 4518 | 84522 | 294 |
+| 4 KiB | 5.3 | 2645 | 3046 | 4358 | 20863 | 161 |
+| 32 KiB | 6.2 | 2966 | 4448 | 6512 | 24985 | 461 |
+| 256 KiB | 12.4 | 5846 | 12352 | 16154 | 21894 | 1110 |
+| 2 MiB | 124.5 | 57914 | 129418 | 160845 | 194196 | 12963 |
+| 10 MiB | 1000.0 | 482154 | 712676 | 778854 | 778854 | 54110 |
+#### v0.10.0, two processes (Master core 2, Reflector core 3)
+
+**BM_PingPong**, fitted complexity lgN, RMS 181 %
+
+| Payload | RTT (µs) | one-way p50 (ns) | p99 (ns) | p99.9 (ns) | max (ns) | jitter stddev (ns) |
+|---|---|---|---|---|---|---|
+| 64 B | 12.2 | 6051 | 7388 | 10780 | 87272 | 1284 |
+| 512 B | 12.2 | 5991 | 7364 | 10900 | 116861 | 1359 |
+| 4 KiB | 12.6 | 6176 | 7739 | 12358 | 332059 | 2237 |
+| 32 KiB | 12.4 | 6126 | 7488 | 10659 | 163224 | 1018 |
+| 256 KiB | 12.5 | 6141 | 7624 | 10188 | 155586 | 1089 |
+| 2 MiB | 14.9 | 6888 | 11065 | 61511 | 1167756 | 11133 |
+| 10 MiB | 24.3 | 9532 | 45086 | 393605 | 1338148 | 29119 |
+
+**BM_PingPong_NoFill**, fitted complexity (1), RMS 2 %
+
+| Payload | RTT (µs) | one-way p50 (ns) | p99 (ns) | p99.9 (ns) | max (ns) | jitter stddev (ns) |
+|---|---|---|---|---|---|---|
+| 64 B | 12.2 | 5971 | 7678 | 21394 | 181843 | 1666 |
+| 512 B | 12.0 | 5911 | 7294 | 17722 | 111230 | 1221 |
+| 4 KiB | 12.1 | 5941 | 7824 | 21438 | 117768 | 1449 |
+| 32 KiB | 12.3 | 6066 | 7729 | 12824 | 271544 | 1481 |
+| 256 KiB | 12.3 | 6036 | 7519 | 10950 | 241280 | 1285 |
+| 2 MiB | 12.2 | 6031 | 7534 | 11050 | 247872 | 1549 |
+| 10 MiB | 12.3 | 6021 | 7478 | 15138 | 337138 | 2668 |
+
+**BM_PingPong_FullEcho**, fitted complexity NlgN, RMS 17 %
+
+| Payload | RTT (µs) | one-way p50 (ns) | p99 (ns) | p99.9 (ns) | max (ns) | jitter stddev (ns) |
+|---|---|---|---|---|---|---|
+| 64 B | 12.6 | 6161 | 7704 | 11105 | 74580 | 1502 |
+| 512 B | 12.6 | 6201 | 7744 | 11165 | 209418 | 1511 |
+| 4 KiB | 13.0 | 6402 | 7934 | 11426 | 280571 | 1906 |
+| 32 KiB | 15.9 | 7819 | 9862 | 16650 | 201944 | 2054 |
+| 256 KiB | 19.9 | 9638 | 14246 | 18188 | 220177 | 2064 |
+| 2 MiB | 136.9 | 62007 | 128662 | 329064 | 1065507 | 23792 |
+| 10 MiB | 1087.3 | 519792 | 847709 | 1430480 | 1430480 | 90850 |
+
 ## 2026-11-11, Ryzen laptop, pinned cores, normal scheduler (learning run)
 
 Not a real-time result: no `SCHED_FIFO`, no isolated cores, memory not locked, desktop session

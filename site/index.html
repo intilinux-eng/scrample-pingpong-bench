@@ -201,6 +201,14 @@ footer p { color: var(--text-muted); }
   real-time machine. See <a href="#next">what would make the numbers count</a>.</p>
 </div>
 
+<div class="callout" role="note">
+  <p><strong>New, 14 November 2026: S-CORE v0.10.0.</strong> Sections 1–6 describe the first run,
+  made with S-CORE platform release v0.5.0-alpha (<code>score_communication</code> 0.1.1). The
+  benchmark now builds against v0.10.0 (<code>score_communication</code> 0.6.0).
+  <a href="#versions">Section 7</a> compares the two versions on the same machine: the zero-copy
+  curve is still flat, and one round trip in a single process is about 23 % faster.</p>
+</div>
+
 <div class="tiles" id="tiles" aria-label="Headline results"></div>
 
 <h2>1. The experiment in one paragraph</h2>
@@ -222,7 +230,7 @@ separate what the middleware costs from what the application's own memory work c
 
 <h2>2. Round-trip time against payload size</h2>
 <div class="card">
-  <div class="chart-head">
+  <div class="chart-head" id="head-rtt">
     <div>
       <p class="chart-title">Round-trip time by payload size</p>
       <p class="chart-sub">Median over 5 repetitions. Both axes are logarithmic.</p>
@@ -376,6 +384,57 @@ are the two hyper-threads of one core, so 2 and 3 are used. Check yours with
 <p>Expected effect: the p50 hardly moves, while p99.9 and max should drop sharply. Seeing that
 happen is the best way to learn what real-time tuning actually buys.</p>
 
+<h2 id="versions">7. S-CORE v0.10.0 against v0.5.0-alpha</h2>
+<p>The benchmark moved from S-CORE platform release v0.5.0-alpha (<code>score_communication</code>
+0.1.1, <code>score_baselibs</code> 0.1.3) to v0.10.0 (<code>score_communication</code> 0.6.0,
+<code>score_baselibs</code> 0.2.17). Did a year of upstream work change the cost of a transfer?
+Both binaries ran on the same laptop with the same settings, one after the other, alternating
+versions so that slow drift (temperature, background load) hits both alike. The whole comparison
+was made twice; this page shows the second pass, made with the exact binary of the updated
+repository.</p>
+<div class="card">
+  <div class="chart-head" id="head-versions">
+    <div>
+      <p class="chart-title">NoFill round-trip time by payload size, per S-CORE version</p>
+      <p class="chart-sub">Median over 5 repetitions. Both axes are logarithmic.</p>
+    </div>
+    <div class="seg" role="group" aria-label="Topology for the version comparison">
+      <button type="button" data-run="0" aria-pressed="true">Single process</button>
+      <button type="button" data-run="1" aria-pressed="false">Two processes</button>
+    </div>
+  </div>
+  <div class="legend" id="legend-versions"></div>
+  <div class="plot" id="plot-versions"></div>
+  <details>
+    <summary>Show the numbers as a table</summary>
+    <div class="table-wrap" id="table-versions"></div>
+  </details>
+</div>
+
+<h3>Lesson 5: zero-copy is still O(1), and the fixed cost went down</h3>
+<p>Both versions stay flat from 64 B to 10 MiB, and Google Benchmark fits O(1) with an RMS error of
+1–2 % for all four runs. What changed is the height of the line. In <strong>one process</strong>
+the round trip dropped from about <strong>6.7 µs to 5.2 µs</strong>, 22–25 % at every payload size,
+in both passes. Across <strong>two processes</strong> it dropped from about 13.4 µs to 12.2 µs; the
+typical one-way latency (p50) went from about 6.6 µs to 6.0 µs, and the direction was the same in
+both passes.</p>
+<div class="lesson"><span class="tag">What is not known yet</span>
+<p>Reading the source does not explain the gain. The notification path follows the same algorithm
+in both versions: the code moved from <code>NotifyEventHandler</code> to
+<code>MessagePassingServiceInstance</code>, but it still sends to remote subscribers first and
+then hands local receive handlers to a pool of two worker threads. The difference may sit in
+<code>score_baselibs</code> (thread pool, synchronisation), in the read path
+(<code>GetNewSamples</code>), or even in compiler settings that newer Bazel rules bring. A
+<code>perf</code> profile of both binaries is the next step. Measuring a difference and explaining
+it are separate tasks.</p></div>
+<p>The tails (p99.9 and max) moved in both directions between the two passes, and the first pass
+showed <code>FullEcho</code> at 2 MiB across two processes 50 % slower, which the second pass did not
+repeat. Under the normal scheduler such numbers mostly record disturbances, so they are not used
+to compare versions here. The full tables are in the
+<a href="https://github.com/intilinux-eng/scrample-pingpong-bench/blob/main/docs/results-log.md">results log</a>,
+and the raw data for this section is in <a href="data/compare.json">data/compare.json</a>.</p>
+<div class="card"><dl class="context" id="context-versions"></dl></div>
+
 <footer>
   <p>Source, benchmark code with learning comments, and the knowledge base:
   <a href="https://github.com/intilinux-eng/scrample-pingpong-bench">github.com/intilinux-eng/scrample-pingpong-bench</a>.
@@ -385,8 +444,9 @@ happen is the best way to learn what real-time tuning actually buys.</p>
 
 <div class="tooltip" id="tooltip" role="status" aria-live="polite"></div>
 
-<!-- Generated by tools/summarise_results.py; defines window.PINGPONG_RESULTS. -->
+<!-- Generated by tools/summarise_results.py; define window.PINGPONG_RESULTS and window.PINGPONG_COMPARE. -->
 <script src="data/results.js"></script>
+<script src="data/compare.js"></script>
 <script>
 (function () {
   "use strict";
@@ -604,7 +664,7 @@ happen is the best way to learn what real-time tuning actually buys.</p>
       table(tw, "Median round-trip time, " + run.label, ["Payload"].concat(BENCH.map(function (b) { return shorts[b.key]; })),
         labels.map(function (l, i) { return [l].concat(series.map(function (s) { return us(s.values[i]); })); }));
     }
-    document.querySelectorAll(".chart-head .seg button").forEach(function (b) {
+    document.querySelectorAll("#head-rtt .seg button").forEach(function (b) {
       b.addEventListener("click", function () {
         runIdx = +b.dataset.run;
         b.parentNode.querySelectorAll("button").forEach(function (o) { o.setAttribute("aria-pressed", o === b ? "true" : "false"); });
@@ -680,12 +740,76 @@ happen is the best way to learn what real-time tuning actually buys.</p>
     ctx("Library", "Google Benchmark " + single.context.library_version + ", " + single.context.transport);
   }
 
+  // Section 7: the same NoFill transfer measured with two S-CORE versions.
+  // compare.json holds four runs: old single, new single, old split, new split.
+  function renderVersions(data) {
+    var VERS = [
+      { name: "v0.5.0-alpha (comm 0.1.1)", short: "v0.5.0-α", color: "--series-2" },
+      { name: "v0.10.0 (comm 0.6.0)", short: "v0.10.0", color: "--series-1" }
+    ];
+    var byTopo = [[data.runs[0], data.runs[1]], [data.runs[2], data.runs[3]]];
+    var topoName = ["single process", "two processes"];
+    legend(document.getElementById("legend-versions"), VERS);
+    var topo = 0;
+    function draw() {
+      var pair = byTopo[topo];
+      var rows = pair.map(function (run) { return find(run, "BM_PingPong_NoFill"); });
+      var labels = rows[0].map(function (r) { return r.label; });
+      var series = VERS.map(function (v, i) {
+        return { color: v.color, short: v.short, values: rows[i].map(function (r) { return r.rtt_us; }) };
+      });
+      lineChart(document.getElementById("plot-versions"), {
+        aria: "Line chart of NoFill round-trip time against payload size for two S-CORE versions, " + topoName[topo] +
+          ". Both lines are flat; v0.10.0 is lower.",
+        xs: rows[0].map(function (r) { return Math.log2(r.bytes); }), xLabels: labels, xTitle: "payload size",
+        yTicks: [2, 5, 10, 20], series: series, tipSuffix: " payload"
+      });
+      var tw = document.getElementById("table-versions"); tw.textContent = "";
+      table(tw, "NoFill, " + topoName[topo] + ": median round trip and one-way p50",
+        ["Payload", "RTT " + VERS[0].short, "RTT " + VERS[1].short, "Change", "p50 " + VERS[0].short, "p50 " + VERS[1].short],
+        labels.map(function (l, i) {
+          var a = rows[0][i], b = rows[1][i];
+          var d = (b.rtt_us / a.rtt_us - 1) * 100;
+          return [l, us(a.rtt_us), us(b.rtt_us), (d > 0 ? "+" : "−") + Math.abs(d).toFixed(1) + " %",
+            us(a.oneway_p50_ns / 1000), us(b.oneway_p50_ns / 1000)];
+        }));
+    }
+    document.querySelectorAll("#head-versions .seg button").forEach(function (b) {
+      b.addEventListener("click", function () {
+        topo = +b.dataset.run;
+        b.parentNode.querySelectorAll("button").forEach(function (o) { o.setAttribute("aria-pressed", o === b ? "true" : "false"); });
+        draw();
+      });
+    });
+    draw();
+    var lastWidth = document.getElementById("plot-versions").clientWidth, pending = 0;
+    window.addEventListener("resize", function () {
+      cancelAnimationFrame(pending);
+      pending = requestAnimationFrame(function () {
+        var w = document.getElementById("plot-versions").clientWidth;
+        if (w !== lastWidth) { lastWidth = w; tooltip.style.display = "none"; draw(); }
+      });
+    });
+    var dl = document.getElementById("context-versions");
+    function ctx(k, v) { h("dt", k, dl); h("dd", v, dl); }
+    ctx("Date", data.date);
+    ctx("Commits", data.commit);
+    ctx("Machine", data.machine);
+    ctx("Setup", data.setup);
+  }
+
   try {
     if (!window.PINGPONG_RESULTS) throw new Error("data/results.js did not load");
     render(window.PINGPONG_RESULTS);
   } catch (e) {
     var p = h("p", "Could not render the results: " + e.message, document.getElementById("tiles"));
     p.style.gridColumn = "1 / -1";
+  }
+  try {
+    if (!window.PINGPONG_COMPARE) throw new Error("data/compare.js did not load");
+    renderVersions(window.PINGPONG_COMPARE);
+  } catch (e) {
+    h("p", "Could not render the version comparison: " + e.message, document.getElementById("plot-versions"));
   }
 })();
 </script>
