@@ -14,6 +14,15 @@ The repository is two things in one VS Code project:
 - a runnable benchmark (`src/benchmark/`), built with Bazel and Google Benchmark;
 - a knowledge base (`docs/`) on zero-copy IPC, the `mw::com` API and Linux real-time tuning.
 
+## Status
+
+- **Builds against** S-CORE platform release **v0.10.0** (`score_communication` 0.6.0,
+  `score_baselibs` 0.2.17).
+- **Published results** were measured at the previous version, v0.5.0-alpha (`score_communication`
+  0.1.1). A first A/B comparison of the two versions is in the changelog; the results page will be
+  updated once the second pass is in.
+- **In progress and recently changed:** see [CHANGELOG.md](CHANGELOG.md).
+
 ## How it works
 
 ```mermaid
@@ -47,7 +56,7 @@ trip from 64 B to 10 MiB was 14.7 to 16.5 µs for `BM_PingPong_NoFill`, with a f
 O(1), and grew from 15.5 µs to 1156 µs for `BM_PingPong_FullEcho`.
 
 **Results page:** the first native Linux run (a Ryzen 9 7940HS laptop, pinned cores, normal
-scheduler) is published with charts and a commented walk-through at
+scheduler, `score_communication` 0.1.1) is published with charts and a commented walk-through at
 **<https://intilinux-eng.github.io/scrample-pingpong-bench/>**. The round trip for
 `BM_PingPong_NoFill` was 6.6 µs in one process and 13.5 µs in two, flat from 64 B to 10 MiB, with a
 fitted O(1) and 1 % RMS. The page explains each curve and what it teaches.
@@ -59,8 +68,8 @@ dev container; both are functional environments, not real-time ones (see
 [Status and limits](#status-and-limits)).
 
 **Native Linux (tested on Ubuntu 26.10, GCC 15).** Same steps as for WSL 2 below. Without sudo,
-Bazelisk can also live in `~/.local/bin/bazel`. GCC 15 needs the `<algorithm>` force-include that
-`.bazelrc` adds to `--config=host`; it is a no-op on older compilers.
+Bazelisk can also live in `~/.local/bin/bazel`. On Ubuntu 26.10, GNU ld 2.47 crashes on the
+`--start-lib` groups that rules_cc generates; `.bazelrc` turns them off in `--config=host`.
 
 **Step 1 (preferred on Windows): WSL 2 (Ubuntu).** Clone inside the Linux file system, not under `/mnt/c`.
 
@@ -134,7 +143,8 @@ src/benchmark/
 docs/                       knowledge base (see below)
 site/                       results page published to GitHub Pages (index.html + data/)
 tools/summarise_results.py  Google Benchmark JSON -> site/data/results.{json,js} + Markdown tables
-MODULE.bazel, .bazelrc      S-CORE dependencies and flags, mirrored from eclipse-score/scrample
+MODULE.bazel, .bazelrc      S-CORE dependencies and flags, following eclipse-score/reference_integration
+CHANGELOG.md                what changed, and what is in progress
 .vscode/, .devcontainer/    tasks, debug configuration, IntelliSense paths, container
 .github/workflows/build.yml build and smoke test on every push
 .github/workflows/pages.yml deploys site/ to GitHub Pages
@@ -173,8 +183,10 @@ bazel_dep(name = "google_benchmark", version = "1.9.5", repo_name = "com_github_
   that the benchmark works, not how fast `mw::com` is. Results that count need a bare-metal Linux
   machine set up as in [docs/04](docs/04-linux-realtime-tuning.md), and belong in the
   [results log](docs/results-log.md).
-- **Versions:** written against `score_communication` 0.1.1 and `score_baselibs` 0.1.3, the versions
-  scrample pins. The `mw::com` API changes between releases.
+- **Versions:** built against `score_communication` 0.6.0 and `score_baselibs` 0.2.17, the versions
+  of S-CORE platform release v0.10.0. The first results (the learning run on the results page) were
+  measured at 0.1.1 / 0.1.3, the versions scrample still pins. The `mw::com` API changes between
+  releases; [docs/02](docs/02-mw-com-api-cheatsheet.md#what-changed-since-011) lists what changed.
 - **Memory:** about 100 MiB of `/dev/shm` (5 slots × 10 MiB × 2 topics).
 - **Leftover shared memory:** after a two-process run, `/dev/shm/lola-ctl-…6433-…` and
   `lola-data-…6433-…` (Topic_A, offered by the Master) were still present on Linux after both
