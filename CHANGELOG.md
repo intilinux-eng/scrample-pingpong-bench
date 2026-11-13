@@ -6,20 +6,23 @@ are dated. Measured numbers live in the [results log](docs/results-log.md), not 
 
 ## Work in progress
 
-- **Measuring S-CORE v0.10.0 against v0.5.0-alpha.** A first A/B pass (both binaries alternated on
-  the same machine, same settings) is summarised under [Unreleased](#unreleased). A second pass with
-  the exact binary of this branch is running. Its results will go into the
-  [results log](docs/results-log.md) and the [results page](https://intilinux-eng.github.io/scrample-pingpong-bench/),
-  which still shows the run made at `score_communication` 0.1.1.
-- **Finding where the single-process speed-up comes from.** The notification path reads the same in
-  both versions (it moved from `NotifyEventHandler` to `MessagePassingServiceInstance`, same
+- **Finding where the single-process speed-up of v0.10.0 comes from.** A round trip in one process
+  is about 23 % faster than at v0.5.0-alpha (see 2026-11-14 below). The notification path reads the
+  same in both versions (it moved from `NotifyEventHandler` to `MessagePassingServiceInstance`, same
   algorithm), so the next step is a `perf` profile of both binaries rather than more reading.
 - **Upstream.** [eclipse-score/scrample](https://github.com/eclipse-score/scrample) still pins
   v0.5.0-alpha. Its update PRs stall (the repository has no CODEOWNERS and no owning team in the
   S-CORE project plan). The plan is to ask on the S-CORE channels whether scrample is still
   maintained before offering the fixes found here.
 
-## Unreleased
+## 2026-11-14
+
+### Added
+
+- [Results log](docs/results-log.md) entry and [section 7 of the results page](https://intilinux-eng.github.io/scrample-pingpong-bench/#versions):
+  v0.10.0 against v0.5.0-alpha on the same laptop, both binaries alternated, the whole comparison
+  made twice. Data in `site/data/compare.json`.
+- `tools/summarise_results.py --js-var`, so a page can load more than one data file.
 
 ### Changed
 
@@ -54,20 +57,17 @@ are dated. Measured numbers live in the [results log](docs/results-log.md), not 
 - `--@score_baselibs//score/json:base_library=nlohmann`: deprecated in baselibs 0.2.17 and without
   effect (vaJson is the only parser).
 
-### Measured (first A/B pass, provisional)
+### Measured
 
-Same laptop as the 2026-11-11 run, cores 2 and 3 pinned with `taskset`, normal scheduler,
-performance governor, 5 repetitions, versions alternated. Medians over the repetitions.
-
-| | v0.5.0-alpha (comm 0.1.1) | v0.10.0 (comm 0.6.0) |
+| `BM_PingPong_NoFill`, median round trip, 64 B – 10 MiB | v0.5.0-alpha | v0.10.0 |
 |---|---|---|
-| `BM_PingPong_NoFill`, one process, round trip | 6.6–6.8 µs | 5.1 µs (−23 %, every payload size) |
-| `BM_PingPong_NoFill`, two processes, round trip | 13.2–15.7 µs | 12.6–13.1 µs |
-| one-way p50, two processes | 6.4–6.7 µs | 6.1–6.2 µs |
+| one process | 6.65–6.91 µs | 5.12–5.26 µs (−22 to −25 % in both passes) |
+| two processes | 13.14–13.53 µs | 12.00–12.35 µs (one-way p50 −0.5 µs in both passes) |
 
-Both versions stay flat from 64 B to 10 MiB. Two-process tails (p99.9) and `BM_PingPong_FullEcho`
-at 2–10 MiB across two processes moved in both directions between runs; the second pass decides
-whether those differences are real.
+Both versions stay flat, fitted O(1) with 1–2 % RMS. Tails and the large `FullEcho` payloads
+across two processes changed in both directions between passes and are treated as noise. The
+results page sections 1–6 still describe the first run at v0.5.0-alpha; section 7 is the
+comparison.
 
 ## 2026-11-11
 

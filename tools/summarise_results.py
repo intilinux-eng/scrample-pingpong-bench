@@ -130,6 +130,8 @@ def main() -> int:
     parser.add_argument("--commit", default="", help="git commit of the measured code")
     parser.add_argument("--date", default="", help="date of the run")
     parser.add_argument("--out", type=Path, required=True, help="output JSON for the page")
+    parser.add_argument("--js-var", default="PINGPONG_RESULTS",
+                        help="global name the .js copy assigns (one per data file on a page)")
     args = parser.parse_intermixed_args()  # allows "--label A a.json --label B b.json"
 
     if len(args.label) != len(args.files):
@@ -154,7 +156,7 @@ def main() -> int:
     args.out.write_text(json.dumps(page_data, indent=1) + "\n")
     # The same data as a script, so the page renders synchronously and also works from file://.
     js_out = args.out.with_suffix(".js")
-    js_out.write_text("window.PINGPONG_RESULTS = " + json.dumps(page_data, indent=1) + ";\n")
+    js_out.write_text(f"window.{args.js_var} = " + json.dumps(page_data, indent=1) + ";\n")
     print(f"wrote {args.out} and {js_out}", file=sys.stderr)
     return 0
 

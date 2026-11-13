@@ -18,9 +18,10 @@ The repository is two things in one VS Code project:
 
 - **Builds against** S-CORE platform release **v0.10.0** (`score_communication` 0.6.0,
   `score_baselibs` 0.2.17).
-- **Published results** were measured at the previous version, v0.5.0-alpha (`score_communication`
-  0.1.1). A first A/B comparison of the two versions is in the changelog; the results page will be
-  updated once the second pass is in.
+- **Published results:** the first run, at v0.5.0-alpha (`score_communication` 0.1.1), and an A/B
+  comparison of v0.5.0-alpha and v0.10.0 on the same laptop: still O(1), and a round trip in one
+  process about 23 % faster at v0.10.0 ([results page, section 7](https://intilinux-eng.github.io/scrample-pingpong-bench/#versions),
+  [results log](docs/results-log.md)). Both are learning runs, not real-time measurements.
 - **In progress and recently changed:** see [CHANGELOG.md](CHANGELOG.md).
 
 ## How it works
@@ -177,8 +178,9 @@ bazel_dep(name = "google_benchmark", version = "1.9.5", repo_name = "com_github_
 
 - **Build and smoke test:** see the badge above. CI builds the binary and runs both topologies
   briefly on a shared runner.
-- **Real-time measurements:** none recorded yet. A bare-metal but non-real-time learning run
-  (pinned cores, normal scheduler) is in the [results log](docs/results-log.md) and on the
+- **Real-time measurements:** none recorded yet. Two bare-metal but non-real-time learning runs
+  (pinned cores, normal scheduler: the first run and the v0.5.0-alpha / v0.10.0 comparison) are in
+  the [results log](docs/results-log.md) and on the
   [results page](https://intilinux-eng.github.io/scrample-pingpong-bench/). Numbers from CI, WSL 2, a container or a VM show
   that the benchmark works, not how fast `mw::com` is. Results that count need a bare-metal Linux
   machine set up as in [docs/04](docs/04-linux-realtime-tuning.md), and belong in the
