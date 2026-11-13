@@ -23,7 +23,7 @@
             "fileMatch": [
                 "**/mw_com_config.json"
             ],
-            "url": "https://raw.githubusercontent.com/eclipse-score/communication/v0.1.1/score/mw/com/impl/configuration/ara_com_config_schema.json"
+            "url": "https://raw.githubusercontent.com/eclipse-score/communication/v0.6.0/score/mw/com/impl/configuration/mw_com_config_schema.json"
         }
     ],
     "C_Cpp.default.cppStandard": "c++17",
