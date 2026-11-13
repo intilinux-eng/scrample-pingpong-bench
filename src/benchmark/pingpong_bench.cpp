@@ -36,7 +36,7 @@
 //                         "exact same data back" flow and is O(N) by construction - the linear part
 //                         is application memory bandwidth, not the middleware.
 //
-// API usage follows score_communication v0.1.1 as pinned by scrample's MODULE.bazel.
+// API usage follows score_communication v0.6.0 (S-CORE platform release v0.10.0).
 //
 // ---------------------------------------------------------------------------------------------
 // How to read this file (learning guide)
@@ -1013,10 +1013,11 @@ int main(int argc, char** argv)
     // reads the manifest and starts mw::com's internal threads, including the worker threads
     // that later call the receive handlers.
     //
-    // Same call scrample's main.cpp makes (score_communication v0.1.1). Newer releases also accept
-    // a score::mw::com::runtime::RuntimeConfiguration - check runtime.h if you bump the version.
-    score::StringLiteral runtime_args[] = {"-service_instance_manifest", options.manifest.c_str()};
-    score::mw::com::runtime::InitializeRuntime(2, runtime_args);
+    // RuntimeConfiguration(Path) takes the manifest path directly. It is unchanged from
+    // score_communication v0.1.1 to v0.6.0, unlike the argc/argv overload: its argument type
+    // changed (score::StringLiteral no longer exists) and it is deprecated since v0.5.0.
+    score::mw::com::runtime::InitializeRuntime(
+        score::mw::com::runtime::RuntimeConfiguration{score::filesystem::Path{options.manifest}});
 
     const bool run_master = options.role != Role::kReflector;
     const bool run_reflector = options.role != Role::kMaster;

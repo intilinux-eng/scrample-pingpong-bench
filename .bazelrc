@@ -15,27 +15,27 @@
 common --registry=https://raw.githubusercontent.com/eclipse-score/bazel_registry/main/
 common --registry=https://bcr.bazel.build
 
-# Feature flags the S-CORE modules need on a plain Linux host (same set as eclipse-score/scrample).
+# Feature flags the S-CORE modules need on a plain Linux host. Since score_communication 0.6.0,
+# use_typedshmd lives in score_communication and the tracing stub is selected in score_baselibs
+# (same spelling as reference_integration v0.10.0).
 build:_common --@score_baselibs//score/mw/log/flags:KRemote_Logging=False
-build:_common --@score_baselibs//score/json:base_library=nlohmann
-build:_common --@score_baselibs//score/memory/shared/flags:use_typedshmd=False
-build:_common --@score_communication//score/mw/com/flags:tracing_library=stub
+build:_common --@score_communication//score/memory/shared/flags:use_typedshmd=False
+build:_common --@score_baselibs//score/analysis/tracing/generic_trace_library:implementation=@score_baselibs//score/analysis/tracing/generic_trace_library/stub_implementation
 build:_common --cxxopt=-Wno-error=mismatched-new-delete
 build:_common --cxxopt=-Wno-error=deprecated-declarations
 
 # Always build with --config=host. Without it the flags above are missing and the build fails.
 build:host --config=_common
 
+# rules_cc 0.2.25 enables --start-lib/--end-lib whenever the linker accepts them. GNU ld 2.47
+# (Ubuntu 26.10) accepts them but crashes with a segmentation fault on this binary's ~420 archive
+# groups. Link plain archives instead; the result is the same binary.
+build:host --features=-supports_start_end_lib
+
 # Upstream compiles its sources with -Werror. With -c opt, GCC 13 reports a flow-analysis false
 # positive in score/memory/shared/offset_ptr.h that an unoptimised build (what scrample uses) does
 # not. Keep it a warning so the optimised build that a benchmark needs goes through.
 build:host --cxxopt=-Wno-error=maybe-uninitialized
-
-# GCC 15's libstdc++ no longer includes <algorithm> through other headers, and score_baselibs 0.1.3
-# (score/mw/log/detail/logging_identifier.cpp) uses std::copy_n without including it. Force-include
-# the header in every C++ compile so that the build works on GCC 15 (Ubuntu 25.10 and later).
-# It is a no-op for older compilers. Remove it once score_baselibs is bumped to a fixed release.
-build:host --cxxopt=-include --cxxopt=algorithm
 
 # Optional, untracked per-user settings.
 try-import %workspace%/user.bazelrc
